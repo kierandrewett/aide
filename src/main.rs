@@ -155,8 +155,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::TogglePanel => {
-                    app.show_right_panel = !app.show_right_panel;
-                    last_resize = (0, 0); // viewport size will change
+                    if app.show_right_panel && app.focus == app::FocusPanel::GitPanel {
+                        // Already focused on git panel — hide it
+                        app.show_right_panel = false;
+                        app.focus = app::FocusPanel::Output;
+                    } else if app.show_right_panel {
+                        // Panel visible but not focused — focus it
+                        app.focus = app::FocusPanel::GitPanel;
+                    } else {
+                        // Panel hidden — show and focus it
+                        app.show_right_panel = true;
+                        app.focus = app::FocusPanel::GitPanel;
+                    }
+                    app.git_status_scroll = 0;
+                    app.git_log_scroll = 0;
+                    last_resize = (0, 0);
                 }
                 Action::ForwardChars(chars) => {
                     if let Some(session) = app.session_manager.active_session() {
@@ -200,7 +213,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::ScrollUp => {
                     if app.focus == app::FocusPanel::GitPanel {
-                        app.git_scroll_offset = app.git_scroll_offset.saturating_sub(3);
+                        // Scroll both git panels together
+                        app.git_status_scroll = app.git_status_scroll.saturating_sub(3);
+                        app.git_log_scroll = app.git_log_scroll.saturating_sub(3);
                     } else {
                         app.scroll_offset = app.scroll_offset.saturating_sub(3);
                         if app.scroll_offset == 0 {
@@ -210,7 +225,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::ScrollDown => {
                     if app.focus == app::FocusPanel::GitPanel {
-                        app.git_scroll_offset = app.git_scroll_offset.saturating_add(3);
+                        app.git_status_scroll = app.git_status_scroll.saturating_add(3);
+                        app.git_log_scroll = app.git_log_scroll.saturating_add(3);
                     } else {
                         app.follow_mode = false;
                         app.scroll_offset = app.scroll_offset.saturating_add(3);
@@ -255,6 +271,7 @@ fn refresh_git_status(app: &mut App) {
             }
             app.git_upstream = git::upstream_counts(&dir);
             app.git_diff_stats = git::diff_stats(&dir);
+            app.git_remote_branch = git::remote_tracking_branch(&dir).unwrap_or_default();
         }
     }
 }

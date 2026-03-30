@@ -36,7 +36,9 @@ pub struct App {
     pub focus: FocusPanel,
     pub output_height: u16,
     pub output_width: u16,
-    pub git_scroll_offset: u16,
+    pub git_status_scroll: u16,
+    pub git_log_scroll: u16,
+    pub git_remote_branch: String,
 }
 
 impl App {
@@ -66,7 +68,9 @@ impl App {
             focus: FocusPanel::Output,
             output_height: 0,
             output_width: 0,
-            git_scroll_offset: 0,
+            git_status_scroll: 0,
+            git_log_scroll: 0,
+            git_remote_branch: String::new(),
         }
     }
 
@@ -99,6 +103,7 @@ impl App {
                 }
                 self.git_upstream = git::upstream_counts(&dir);
                 self.git_diff_stats = git::diff_stats(&dir);
+                self.git_remote_branch = git::remote_tracking_branch(&dir).unwrap_or_default();
             }
         } else {
             self.claude_output.clear();
@@ -107,6 +112,7 @@ impl App {
             self.git_branch.clear();
             self.git_upstream = None;
             self.git_diff_stats = None;
+            self.git_remote_branch.clear();
         }
     }
 

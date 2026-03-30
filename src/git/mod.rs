@@ -11,10 +11,17 @@ pub fn status_short(directory: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Get git log (oneline graph, last 20 commits) for a directory.
+/// Get git log with hash, decoration, relative date, author, message.
 pub fn log_oneline(directory: &str) -> Result<String> {
     let output = Command::new("git")
-        .args(["log", "--oneline", "--graph", "-20"])
+        .args([
+            "log",
+            "--oneline",
+            "--graph",
+            "--decorate=short",
+            "--format=%h %d %s (%cr)",
+            "-30",
+        ])
         .current_dir(directory)
         .output()
         .context("Failed to run git log")?;
@@ -28,6 +35,19 @@ pub fn current_branch(directory: &str) -> Result<String> {
         .current_dir(directory)
         .output()
         .context("Failed to get current branch")?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Get the remote tracking branch (e.g. "origin/main").
+pub fn remote_tracking_branch(directory: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .current_dir(directory)
+        .output()
+        .context("Failed to get remote tracking branch")?;
+    if !output.status.success() {
+        return Ok(String::new());
+    }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
