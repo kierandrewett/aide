@@ -13,11 +13,10 @@ pub fn create_session(name: &str, directory: &str) -> Result<()> {
     Ok(())
 }
 
-/// Send the claude-run command to a tmux session.
-pub fn run_claude(session_name: &str) -> Result<()> {
-    let cmd = format!("claude-run claude");
+/// Send a command to a tmux session.
+pub fn run_command(session_name: &str, command: &str) -> Result<()> {
     let status = Command::new("tmux")
-        .args(["send-keys", "-t", session_name, &cmd, "C-m"])
+        .args(["send-keys", "-t", session_name, command, "C-m"])
         .status()
         .context("Failed to send keys to tmux session")?;
     if !status.success() {

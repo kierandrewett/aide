@@ -13,13 +13,15 @@ pub struct Session {
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     pub active_index: usize,
+    pub command: String,
 }
 
 impl SessionManager {
-    pub fn new() -> Self {
+    pub fn new(command: String) -> Self {
         Self {
             sessions: Vec::new(),
             active_index: 0,
+            command,
         }
     }
 
@@ -48,7 +50,7 @@ impl SessionManager {
         let session_name = format!("{}_{}", project_name, instance_number);
 
         tmux::create_session(&session_name, directory)?;
-        tmux::run_claude(&session_name)?;
+        tmux::run_command(&session_name, &self.command)?;
 
         self.sessions.push(Session {
             name: session_name,
