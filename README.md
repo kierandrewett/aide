@@ -1,6 +1,40 @@
-# aide
+<p align="center">
+  <h1 align="center">aide</h1>
+  <p align="center">A terminal IDE for managing multiple Claude Code sessions in tabbed workspaces.</p>
+</p>
 
-A terminal IDE that manages multiple Claude Code instances as tabbed workspaces, powered by tmux.
+<p align="center">
+  <a href="https://github.com/kierandrewett/aide/releases">Download</a> &middot;
+  <a href="#install">Install</a> &middot;
+  <a href="#usage">Usage</a> &middot;
+  <a href="#configuration">Configuration</a>
+</p>
+
+---
+
+**aide** wraps [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in a proper workspace — tabs, git context, and keyboard-driven navigation — all inside your terminal. Each session runs in tmux, so they survive disconnects, crashes, and restarts.
+
+```
+┌─ Sessions ────────────────┬─ Git Status ──────┐
+│ api │ frontend │ infra     │ ## main            │
+├───────────────────────────│  M src/main.rs     │
+│                           │ ?? new_file.txt    │
+│  Claude Code output       ├─ Git Log ──────────┤
+│  with full ANSI color     │ * abc1234 feat:... │
+│                           │ * def5678 fix:...  │
+│                           │                    │
+├───────────────────────────┴────────────────────┤
+│ ~/d/api │ api  main ✓     ^T new ^G git ^X exit│
+└────────────────────────────────────────────────┘
+```
+
+## Why aide?
+
+- **Multiple Claude sessions at once** — work on your API, frontend, and infra in parallel, each in its own tab
+- **Git at a glance** — branch, status, upstream, and log always visible without switching context
+- **Sessions that survive everything** — powered by tmux, so SSH drops and terminal crashes don't kill your work
+- **Zero config to start** — just run `aide` and go. Customize later if you want
+- **Keyboard native** — everything is a keystroke away. All non-reserved keys pass straight through to Claude
 
 ## Install
 
@@ -10,7 +44,13 @@ A terminal IDE that manages multiple Claude Code instances as tabbed workspaces,
 curl -fsSL https://raw.githubusercontent.com/kierandrewett/aide/main/install.sh | bash
 ```
 
-Or specify an install directory:
+Pin a specific version:
+
+```bash
+./install.sh v0.1.0
+```
+
+Change install location:
 
 ```bash
 AIDE_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/kierandrewett/aide/main/install.sh | bash
@@ -18,14 +58,14 @@ AIDE_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/kie
 
 ### From GitHub releases
 
-Download the latest binary for your platform from [Releases](https://github.com/kierandrewett/aide/releases):
+Grab the latest binary from [Releases](https://github.com/kierandrewett/aide/releases):
 
-| Platform             | Archive                      |
-|----------------------|------------------------------|
-| Linux (x86_64)       | `aide-x86_64-linux.tar.gz`   |
-| Linux (aarch64/ARM)  | `aide-aarch64-linux.tar.gz`  |
-| macOS (Intel)        | `aide-x86_64-macos.tar.gz`   |
-| macOS (Apple Silicon) | `aide-aarch64-macos.tar.gz` |
+| Platform              | Archive                      |
+|-----------------------|------------------------------|
+| Linux (x86_64)        | `aide-x86_64-linux.tar.gz`   |
+| Linux (aarch64/ARM)   | `aide-aarch64-linux.tar.gz`  |
+| macOS (Intel)         | `aide-x86_64-macos.tar.gz`   |
+| macOS (Apple Silicon)  | `aide-aarch64-macos.tar.gz` |
 
 ```bash
 tar xzf aide-*.tar.gz
@@ -41,11 +81,7 @@ cargo build --release
 cp target/release/aide ~/.local/bin/
 ```
 
-## Requirements
-
-- **tmux** (3.0+)
-- **claude-run** — wrapper script for Claude CLI (must be in `$PATH`)
-- **git** — for git panel features
+**Requirements:** tmux 3.0+, git
 
 ## Usage
 
@@ -53,98 +89,93 @@ cp target/release/aide ~/.local/bin/
 aide
 ```
 
-aide discovers projects from `~/dev` by default.
+That's it. aide scans your projects directory (`~/dev` by default), and you pick what to work on.
+
+### Keybindings
+
+| Key         | Action                           |
+|-------------|----------------------------------|
+| `Tab`       | Next session                     |
+| `Shift+Tab` | Previous session                |
+| `Ctrl+T`   | New session (project picker)     |
+| `Ctrl+P`   | Project picker                   |
+| `Ctrl+W`   | Close session (with confirmation)|
+| `Ctrl+G`   | Toggle git panel                 |
+| `Ctrl+X`   | Quit aide                        |
+| `PgUp/PgDn`| Scroll output                    |
+| Mouse wheel | Scroll output                   |
+
+Everything else goes straight to Claude Code — type normally.
+
+### Responsive layout
+
+On wide terminals (100+ cols), you get the full split view: Claude output on the left, git panels on the right. On narrow terminals, borders are stripped and the git panel becomes a fullscreen overlay toggled with `Ctrl+G`.
 
 ## Configuration
 
-Config file is created automatically at `~/.config/aide/config.toml` on first run:
+Config lives at `~/.config/aide/config.toml` and is created automatically on first run:
 
 ```toml
-command = "claude-run claude"
+command = "claude"
 projects_dir = "/home/you/dev"
 ```
 
-| Key            | Description                                    | Default              |
-|----------------|------------------------------------------------|----------------------|
-| `command`      | Command to run in each tmux session            | `claude-run claude`  |
-| `projects_dir` | Directory to scan for projects                | `~/dev`              |
+| Key            | What it does                              | Default  |
+|----------------|-------------------------------------------|----------|
+| `command`      | Command to launch in each tmux session    | `claude` |
+| `projects_dir` | Directory to scan for project folders     | `~/dev`  |
 
-## Layout
+### Custom commands
 
-```
-┌─ Sessions ────────────────┬─ Git Status ──────┐
-│ Tab1 │ Tab2 │ Tab3        │ ## main            │
-├───────────────────────────│  M src/main.rs     │
-│                           │ ?? new_file.txt    │
-│ Claude Output             ├─ Git Log ──────────┤
-│ (scrollable viewport)     │ * abc1234 feat:... │
-│                           │ * def5678 fix:...  │
-│                           │                    │
-├───────────────────────────┴────────────────────┤
-│ /path │ project │ session  branch  ⇣2 ⇡1  ... │
-└────────────────────────────────────────────────┘
+The `command` field is flexible — use it to wrap Claude with your own tooling:
+
+```toml
+# Run through a wrapper script
+command = "my-claude-wrapper"
+
+# Pass flags
+command = "claude --verbose"
 ```
 
-The right panel auto-hides when terminal width < 80 columns. Toggle it with **Ctrl+G**.
+aide never calls `claude` directly. It runs your configured command inside tmux, so the command is responsible for any setup, notifications, or logging you need.
 
-All keystrokes not reserved by aide are forwarded directly to the active tmux session, so you can type into Claude Code normally.
+## How it works
 
-## Keybindings
+aide creates a tmux session per project. Your keystrokes are forwarded to the active tmux pane in real-time, and the pane output (with full ANSI color) is captured and rendered in the TUI at ~60fps. Git data refreshes in the background on a 2-3 second cycle.
 
-| Key        | Action                    |
-|------------|---------------------------|
-| Tab        | Next instance             |
-| Shift+Tab  | Previous instance         |
-| Ctrl+T     | Create new instance       |
-| Ctrl+P     | Project picker            |
-| Ctrl+W     | Close instance (confirm)  |
-| Ctrl+G     | Toggle right panel        |
-| Ctrl+X     | Exit aide (sessions live) |
-
-All other keys are passed through to the Claude Code session.
-
-## Execution Model
-
-aide **never** calls `claude` directly. It invokes the configured `command` (default: `claude-run claude`) inside tmux sessions. The wrapper command is responsible for notifications, logging, and any other concerns.
-
-## Session Persistence
-
-Sessions run in tmux and survive:
+Because sessions are just tmux, they persist across:
+- aide exits and restarts (auto-reconnects)
 - SSH disconnects
-- aide exits
 - Terminal crashes
+- System sleep/wake
 
-Restarting aide reconnects to existing sessions automatically.
-
-## Architecture
+### Architecture
 
 ```
 src/
-├── main.rs         # Entry point, event loop, key forwarding
-├── app.rs          # Application state, project discovery
-├── config.rs       # TOML config loading (~/.config/aide/config.toml)
-├── ui/mod.rs       # ratatui rendering (layout, tabs, panels, status bar, picker)
-├── tmux/mod.rs     # tmux process management
-├── git/mod.rs      # Git status, log, branch, upstream queries
-├── sessions/mod.rs # Session lifecycle management
-└── input/mod.rs    # Keybinding mapping + passthrough
+├── main.rs         Event loop, key forwarding, refresh timers
+├── app.rs          Application state, project discovery
+├── config.rs       TOML config (~/.config/aide/config.toml)
+├── ui/mod.rs       TUI rendering (ratatui)
+├── tmux/mod.rs     tmux process management
+├── git/mod.rs      Git queries (status, log, branch, upstream)
+├── sessions/mod.rs Session lifecycle
+└── input/mod.rs    Input handling, key batching, passthrough
 ```
 
-## Refresh Intervals
-
-| Data          | Interval |
-|---------------|----------|
-| Claude output | 500ms    |
-| Git status    | 2s       |
-| Git log       | 3s       |
+Built with [ratatui](https://github.com/ratatui/ratatui) + [crossterm](https://github.com/crossterm-rs/crossterm) + tmux.
 
 ## Releasing
 
-Releases are built automatically via GitHub Actions when a version tag is pushed:
+Releases are automated via GitHub Actions when a version tag is pushed:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-This builds binaries for all platforms and creates a GitHub release with archives and checksums.
+Builds binaries for all 4 platforms (x86_64/aarch64 Linux + macOS), packages them with SHA256 checksums, and publishes a GitHub release.
+
+## License
+
+MIT
