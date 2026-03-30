@@ -200,8 +200,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     last_resize = (0, 0);
                 }
                 Action::NewInstance => {
-                    // Show the welcome/splash tab
+                    // Open and switch to the welcome/splash tab
                     app.show_welcome = true;
+                    app.session_manager.active_index = app.session_manager.sessions.len();
                 }
                 Action::ProjectPicker => app.open_picker(),
                 Action::CloseInstance => {

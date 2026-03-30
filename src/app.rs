@@ -158,8 +158,13 @@ impl App {
     pub fn picker_select_confirm(&mut self) -> Result<()> {
         let filtered = self.filtered_projects();
         if let Some(project) = filtered.get(self.picker_selected).cloned() {
+            let was_on_welcome = self.is_on_welcome();
             self.close_picker();
             self.create_session_for_project(&project)?;
+            // If picked from the welcome tab, close it (replaced by the new session)
+            if was_on_welcome {
+                self.show_welcome = false;
+            }
         }
         Ok(())
     }

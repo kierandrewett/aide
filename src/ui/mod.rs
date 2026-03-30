@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
@@ -203,7 +203,6 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         titles.push(Line::from(Span::styled("aide", style)));
     }
 
-    // Selected index
     let selected = if on_welcome {
         titles.len().saturating_sub(1)
     } else {
@@ -225,19 +224,127 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     };
 
     let divider = if is_narrow { " │ " } else { " | " };
+    let divider_w = divider.width();
 
-    let tabs = Tabs::new(titles)
-        .block(block)
-        .select(selected)
-        .divider(Span::styled(divider, Style::default().fg(Color::DarkGray)))
-        .highlight_style(
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::Blue)
-                .add_modifier(Modifier::BOLD),
-        );
+    // Calculate available width inside the block (subtract borders)
+    let inner_w = if is_narrow {
+        area.width as usize
+    } else {
+        area.width.saturating_sub(2) as usize // side borders
+    };
 
-    frame.render_widget(tabs, area);
+    // Compute each tab's display width (including " name " padding)
+    let tab_widths: Vec<usize> = titles.iter().map(|t| t.width() + 2).collect();
+
+    // Find a window of tabs that fits, centered on the selected tab
+    let mut start = 0;
+    let mut end = titles.len();
+
+    // Indicators take space: "◀ " = 2, " ▶" = 2
+    let arrow_w = 2;
+
+    // Shrink window to fit
+    if titles.len() > 1 {
+        // Total width of all tabs with dividers
+        let total_w: usize =
+            tab_widths.iter().sum::<usize>() + (titles.len().saturating_sub(1)) * divider_w;
+
+        if total_w > inner_w {
+            // Need to truncate — find window around selected
+            start = selected;
+            end = selected + 1;
+            let mut used = tab_widths[selected];
+
+            // Expand left and right alternately
+            loop {
+                let left_space = if start > 0 { arrow_w } else { 0 };
+                let right_space = if end < titles.len() { arrow_w } else { 0 };
+                let budget = inner_w.saturating_sub(left_space + right_space);
+
+                let mut expanded = false;
+
+                // Try expanding right
+                if end < titles.len() {
+                    let cost = divider_w + tab_widths[end];
+                    if used + cost <= budget {
+                        used += cost;
+                        end += 1;
+                        expanded = true;
+                    }
+                }
+
+                // Try expanding left
+                if start > 0 {
+                    let cost = divider_w + tab_widths[start - 1];
+                    let left_space2 = if start - 1 > 0 { arrow_w } else { 0 };
+                    let right_space2 = if end < titles.len() { arrow_w } else { 0 };
+                    let budget2 = inner_w.saturating_sub(left_space2 + right_space2);
+                    if used + cost <= budget2 {
+                        used += cost;
+                        start -= 1;
+                        expanded = true;
+                    }
+                }
+
+                if !expanded {
+                    break;
+                }
+            }
+        }
+    }
+
+    let has_left = start > 0;
+    let has_right = end < titles.len();
+
+    // Build visible titles with adjusted selected index
+    let visible_titles: Vec<Line> = titles[start..end].to_vec();
+    let visible_selected = selected.saturating_sub(start);
+
+    // Render manually with overflow indicators
+    let mut spans: Vec<Span> = Vec::new();
+
+    if has_left {
+        spans.push(Span::styled("◀ ", Style::default().fg(Color::DarkGray)));
+    }
+
+    for (i, title) in visible_titles.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(divider, Style::default().fg(Color::DarkGray)));
+        }
+        let is_sel = i == visible_selected;
+        // Re-style: the title already has styling but Tabs widget applies highlight_style
+        // We need to manually apply the highlight style for selected
+        if is_sel {
+            let text = title
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>();
+            spans.push(Span::styled(
+                format!(" {} ", text),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            let text = title
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>();
+            let style = title.spans.first().map(|s| s.style).unwrap_or_default();
+            spans.push(Span::styled(format!(" {} ", text), style));
+        }
+    }
+
+    if has_right {
+        spans.push(Span::styled(" ▶", Style::default().fg(Color::DarkGray)));
+    }
+
+    let tab_line = Line::from(spans);
+    let paragraph = Paragraph::new(tab_line).block(block);
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
