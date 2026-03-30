@@ -17,28 +17,70 @@ pub enum Action {
     Cancel,
     PickerChar(char),
     PickerBackspace,
-    // Forward to tmux
-    ForwardKey(KeyEvent),
+    // Forward to tmux — batch of literal chars or a single special key
+    ForwardChars(String),
+    ForwardSpecial(String),
+    ForwardCtrl(char),
     None,
 }
 
-/// Poll for a key event with the given timeout. Returns an Action.
-pub fn poll_action(timeout: Duration, picker_mode: bool) -> Action {
-    if event::poll(timeout).unwrap_or(false) {
+/// Drain all pending events, returning a list of actions.
+/// Batches consecutive character inputs into a single ForwardChars.
+pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
+    let mut actions = Vec::new();
+
+    // Wait for first event with timeout
+    if !event::poll(timeout).unwrap_or(false) {
+        return actions;
+    }
+
+    // Drain all available events
+    loop {
+        if !event::poll(Duration::ZERO).unwrap_or(false) {
+            break;
+        }
         if let Ok(Event::Key(key)) = event::read() {
-            return map_key(key, picker_mode);
+            let action = map_key(key, picker_mode);
+            match &action {
+                Action::None => {}
+                _ => actions.push(action),
+            }
+        } else {
+            break;
         }
     }
-    Action::None
+
+    // Batch consecutive ForwardChars
+    coalesce_chars(actions)
+}
+
+fn coalesce_chars(actions: Vec<Action>) -> Vec<Action> {
+    let mut result: Vec<Action> = Vec::with_capacity(actions.len());
+    let mut char_buf = String::new();
+
+    for action in actions {
+        match action {
+            Action::ForwardChars(s) => char_buf.push_str(&s),
+            other => {
+                if !char_buf.is_empty() {
+                    result.push(Action::ForwardChars(std::mem::take(&mut char_buf)));
+                }
+                result.push(other);
+            }
+        }
+    }
+    if !char_buf.is_empty() {
+        result.push(Action::ForwardChars(char_buf));
+    }
+    result
 }
 
 fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
-    // Only handle key press events, not release/repeat
     if key.kind != KeyEventKind::Press {
         return Action::None;
     }
 
-    // Aide-reserved Ctrl bindings — always intercepted
+    // Aide-reserved bindings — always intercepted
     match key {
         KeyEvent {
             code: KeyCode::Char('t'),
@@ -65,7 +107,6 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             modifiers: KeyModifiers::CONTROL,
             ..
         } => return Action::Exit,
-        // Tab switching
         KeyEvent {
             code: KeyCode::Tab,
             modifiers: KeyModifiers::NONE,
@@ -78,7 +119,6 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         _ => {}
     }
 
-    // When picker/dialog is open, handle input for the picker
     if picker_mode {
         return match key {
             KeyEvent {
@@ -108,6 +148,24 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         };
     }
 
-    // Everything else gets forwarded to tmux
-    Action::ForwardKey(key)
+    // Forward to tmux
+    match (&key.code, key.modifiers) {
+        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => Action::ForwardCtrl(*c),
+        (KeyCode::Char(c), _) => Action::ForwardChars(c.to_string()),
+        (KeyCode::Enter, _) => Action::ForwardSpecial("Enter".into()),
+        (KeyCode::Backspace, _) => Action::ForwardSpecial("BSpace".into()),
+        (KeyCode::Esc, _) => Action::ForwardSpecial("Escape".into()),
+        (KeyCode::Up, _) => Action::ForwardSpecial("Up".into()),
+        (KeyCode::Down, _) => Action::ForwardSpecial("Down".into()),
+        (KeyCode::Left, _) => Action::ForwardSpecial("Left".into()),
+        (KeyCode::Right, _) => Action::ForwardSpecial("Right".into()),
+        (KeyCode::Home, _) => Action::ForwardSpecial("Home".into()),
+        (KeyCode::End, _) => Action::ForwardSpecial("End".into()),
+        (KeyCode::PageUp, _) => Action::ForwardSpecial("PageUp".into()),
+        (KeyCode::PageDown, _) => Action::ForwardSpecial("PageDown".into()),
+        (KeyCode::Delete, _) => Action::ForwardSpecial("DC".into()),
+        (KeyCode::Insert, _) => Action::ForwardSpecial("IC".into()),
+        (KeyCode::F(n), _) => Action::ForwardSpecial(format!("F{}", n)),
+        _ => Action::None,
+    }
 }

@@ -11,19 +11,23 @@ use crate::app::App;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let size = frame.area();
-    let show_right = app.show_right_panel && size.width >= 80;
+    let is_narrow = size.width < 100;
+    let status_height = if is_narrow { 2 } else { 1 };
 
     // Main vertical split: content area + status bar
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .constraints([Constraint::Min(3), Constraint::Length(status_height)])
         .split(size);
 
     let content_area = main_chunks[0];
     let status_area = main_chunks[1];
 
-    if show_right {
-        // Horizontal split: left (tabs+output) | right (git panels)
+    if app.show_right_panel && is_narrow {
+        // Narrow terminal: git panel takes over full screen
+        draw_right_panel(frame, app, content_area);
+    } else if app.show_right_panel {
+        // Wide terminal: side-by-side split
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -225,39 +229,72 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         None => String::new(),
     };
 
-    let total_width = area.width as usize;
+    let w = area.width as usize;
+    let is_narrow = area.height >= 2;
 
-    let left = format!(" {} {} ", directory, session_name);
-    let right_parts = format!(" {} {} ^T new ^W close ^G panel ^X exit ", branch, upstream);
+    let left_text = format!(" {} {} ", directory, session_name);
+    let git_text = format!(" {} {} ", branch, upstream);
+    let hints = "^T new ^W close ^G git ^X exit ";
 
-    let padding = total_width
-        .saturating_sub(left.len())
-        .saturating_sub(right_parts.len());
+    if is_narrow {
+        // Two-line status bar
+        let line1_pad = w
+            .saturating_sub(left_text.len())
+            .saturating_sub(git_text.len());
+        let line1 = Line::from(vec![
+            Span::styled(
+                left_text,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(line1_pad), Style::default().bg(Color::DarkGray)),
+            Span::styled(
+                git_text,
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
 
-    let bar = Line::from(vec![
-        Span::styled(
-            left,
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ".repeat(padding), Style::default().bg(Color::DarkGray)),
-        Span::styled(
-            format!(" {} {} ", branch, upstream),
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "^T new ^W close ^G panel ^X exit ",
-            Style::default().fg(Color::Gray).bg(Color::DarkGray),
-        ),
-    ]);
+        let line2_pad = w.saturating_sub(hints.len());
+        let line2 = Line::from(vec![
+            Span::styled(" ".repeat(line2_pad), Style::default().bg(Color::DarkGray)),
+            Span::styled(hints, Style::default().fg(Color::Gray).bg(Color::DarkGray)),
+        ]);
 
-    let paragraph = Paragraph::new(bar);
-    frame.render_widget(paragraph, area);
+        let text = Text::from(vec![line1, line2]);
+        frame.render_widget(Paragraph::new(text), area);
+    } else {
+        // Single-line status bar
+        let right = format!("{}{}", git_text, hints);
+        let padding = w
+            .saturating_sub(left_text.len())
+            .saturating_sub(right.len());
+
+        let bar = Line::from(vec![
+            Span::styled(
+                left_text,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(padding), Style::default().bg(Color::DarkGray)),
+            Span::styled(
+                git_text,
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(hints, Style::default().fg(Color::Gray).bg(Color::DarkGray)),
+        ]);
+
+        frame.render_widget(Paragraph::new(bar), area);
+    }
 }
 
 fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
