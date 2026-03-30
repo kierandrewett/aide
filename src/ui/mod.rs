@@ -20,17 +20,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
-    // Show splash screen if no sessions
-    if app.session_manager.sessions.is_empty() {
+    // Show splash screen if no sessions and picker isn't open
+    if app.session_manager.sessions.is_empty() && !app.show_picker {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(3), Constraint::Length(status_height)])
             .split(size);
         draw_splash(frame, app, chunks[0]);
         draw_status_bar(frame, app, chunks[1]);
-        if app.show_picker {
-            draw_picker(frame, app, size);
-        }
+        return;
+    }
+
+    // When picker is open with no sessions, just show the picker over a blank background
+    if app.session_manager.sessions.is_empty() && app.show_picker {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(status_height)])
+            .split(size);
+        draw_status_bar(frame, app, chunks[1]);
+        draw_picker(frame, app, size);
         return;
     }
 
