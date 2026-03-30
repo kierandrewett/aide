@@ -20,7 +20,6 @@ pub fn log_oneline(directory: &str) -> Result<String> {
             "--graph",
             "--decorate=short",
             "--format=%h %d %s (%cr)",
-            "-30",
         ])
         .current_dir(directory)
         .output()

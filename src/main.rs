@@ -148,7 +148,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     app.refresh_data();
                     last_resize = (0, 0);
                 }
-                Action::NewInstance | Action::ProjectPicker => app.open_picker(),
+                Action::NewInstance => {
+                    // Only open picker if sessions already exist;
+                    // otherwise splash screen is already showing
+                    if !app.session_manager.sessions.is_empty() {
+                        app.open_picker();
+                    }
+                }
+                Action::ProjectPicker => app.open_picker(),
                 Action::CloseInstance => {
                     if !app.session_manager.sessions.is_empty() {
                         app.show_close_confirm = true;

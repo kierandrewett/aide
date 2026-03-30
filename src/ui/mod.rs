@@ -20,25 +20,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
-    // Show splash screen if no sessions and picker isn't open
-    if app.session_manager.sessions.is_empty() && !app.show_picker {
+    // Show splash screen when no sessions exist
+    if app.session_manager.sessions.is_empty() {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(3), Constraint::Length(status_height)])
             .split(size);
         draw_splash(frame, app, chunks[0]);
         draw_status_bar(frame, app, chunks[1]);
-        return;
-    }
-
-    // When picker is open with no sessions, just show the picker over a blank background
-    if app.session_manager.sessions.is_empty() && app.show_picker {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(status_height)])
-            .split(size);
-        draw_status_bar(frame, app, chunks[1]);
-        draw_picker(frame, app, size);
+        if app.show_picker {
+            draw_picker(frame, app, size);
+        }
         return;
     }
 
@@ -130,19 +122,12 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled(
-            "  Ctrl+T ",
+            "  Ctrl+P ",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("new session   ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "Ctrl+P ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("pick project   ", Style::default().fg(Color::DarkGray)),
+        Span::styled("select project   ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "Ctrl+X ",
             Style::default()
@@ -396,7 +381,19 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
     let max_scroll = total.saturating_sub(visible);
     app.git_status_scroll = app.git_status_scroll.min(max_scroll);
 
-    let block = git_panel_block(" 📋 Status ", is_focused, is_narrow);
+    let at_top = app.git_status_scroll == 0;
+    let at_bottom = app.git_status_scroll >= max_scroll;
+    let scroll_hint = if max_scroll == 0 {
+        ""
+    } else if at_top {
+        " ↓ more "
+    } else if at_bottom {
+        " ↑ more "
+    } else {
+        " ↑↓ "
+    };
+    let title = format!(" 📋 Status{}", scroll_hint);
+    let block = git_panel_block(&title, is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -571,7 +568,19 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let max_scroll = total.saturating_sub(visible);
     app.git_log_scroll = app.git_log_scroll.min(max_scroll);
 
-    let block = git_panel_block(" 📜 Log ", is_focused, is_narrow);
+    let at_top = app.git_log_scroll == 0;
+    let at_bottom = app.git_log_scroll >= max_scroll;
+    let scroll_hint = if max_scroll == 0 {
+        ""
+    } else if at_top {
+        " ↓ more "
+    } else if at_bottom {
+        " ── end ── "
+    } else {
+        " ↑↓ "
+    };
+    let title = format!(" 📜 Log{}", scroll_hint);
+    let block = git_panel_block(&title, is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
