@@ -128,6 +128,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .highlight_style(
             Style::default()
                 .fg(Color::Yellow)
+                .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         );
 
