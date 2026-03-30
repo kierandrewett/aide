@@ -7,14 +7,16 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, FocusPanel};
 
-pub fn draw(frame: &mut Frame, app: &App) {
+const FOCUSED_BORDER: Color = Color::Cyan;
+const UNFOCUSED_BORDER: Color = Color::DarkGray;
+
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
 
-    // Main vertical split: content area + status bar
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(status_height)])
@@ -24,10 +26,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let status_area = main_chunks[1];
 
     if app.show_right_panel && is_narrow {
-        // Narrow terminal: git panel takes over full screen
+        // Narrow: git panel fullscreen
+        app.focus = FocusPanel::GitPanel;
         draw_right_panel(frame, app, content_area);
     } else if app.show_right_panel {
-        // Wide terminal: side-by-side split
+        // Wide: side-by-side
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -36,22 +39,40 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_left_panel(frame, app, h_chunks[0]);
         draw_right_panel(frame, app, h_chunks[1]);
     } else {
+        app.focus = FocusPanel::Output;
         draw_left_panel(frame, app, content_area);
     }
 
     draw_status_bar(frame, app, status_area);
 
-    // Draw overlays
     if app.show_close_confirm {
         draw_confirm_dialog(frame, size);
     }
-
     if app.show_picker {
         draw_picker(frame, app, size);
     }
 }
 
-fn draw_left_panel(frame: &mut Frame, app: &App, area: Rect) {
+fn focused_block(title: &str, focused: bool) -> Block<'_> {
+    let border_color = if focused {
+        FOCUSED_BORDER
+    } else {
+        UNFOCUSED_BORDER
+    };
+    let title_style = if focused {
+        Style::default()
+            .fg(FOCUSED_BORDER)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(UNFOCUSED_BORDER)
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(title, title_style))
+}
+
+fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(1)])
@@ -62,6 +83,7 @@ fn draw_left_panel(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
+    let is_focused = app.focus == FocusPanel::Output;
     let titles: Vec<Line> = app
         .session_manager
         .sessions
@@ -80,7 +102,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title(" Sessions "))
+        .block(focused_block(" Sessions ", is_focused))
         .select(app.session_manager.active_index)
         .highlight_style(
             Style::default()
@@ -91,20 +113,41 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(tabs, area);
 }
 
-fn draw_claude_output(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect) {
+    let is_focused = app.focus == FocusPanel::Output;
+
+    // Track viewport size for tmux resize
+    let inner_width = area.width.saturating_sub(2);
+    let inner_height = area.height.saturating_sub(2);
+    app.output_width = inner_width;
+    app.output_height = inner_height;
+
     let text = app
         .claude_output
         .as_bytes()
         .to_vec()
         .into_text()
         .unwrap_or_else(|_| Text::raw(&app.claude_output));
+
     let total_lines = text.lines.len() as u16;
-    let visible_height = area.height.saturating_sub(2);
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll = app.scroll_offset.min(max_scroll);
+
+    // Auto-scroll: in follow mode, always show bottom
+    let scroll = if app.follow_mode {
+        total_lines.saturating_sub(inner_height)
+    } else {
+        let max_scroll = total_lines.saturating_sub(inner_height);
+        app.scroll_offset.min(max_scroll)
+    };
+
+    // Build title with typing indicator
+    let title = if app.is_typing() {
+        " Output  ● "
+    } else {
+        " Output "
+    };
 
     let paragraph = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" Output "))
+        .block(focused_block(title, is_focused))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
 
@@ -122,6 +165,7 @@ fn draw_right_panel(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_git_status(frame: &mut Frame, app: &App, area: Rect) {
+    let is_focused = app.focus == FocusPanel::GitPanel;
     let lines: Vec<Line> = app
         .git_status
         .lines()
@@ -143,14 +187,21 @@ fn draw_git_status(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let total = lines.len() as u16;
+    let visible = area.height.saturating_sub(2);
+    let max_scroll = total.saturating_sub(visible);
+    let scroll = app.git_scroll_offset.min(max_scroll);
+
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" Git Status "))
-        .wrap(Wrap { trim: false });
+        .block(focused_block(" Git Status ", is_focused))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
 
     frame.render_widget(paragraph, area);
 }
 
 fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
+    let is_focused = app.focus == FocusPanel::GitPanel;
     let lines: Vec<Line> = app
         .git_log
         .lines()
@@ -165,7 +216,7 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" Git Log "))
+        .block(focused_block(" Git Log ", is_focused))
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
@@ -179,7 +230,6 @@ fn shorten_path(path: &str) -> String {
         path.to_string()
     };
 
-    // Shorten intermediate directories to first char: ~/dev/myproject -> ~/d/myproject
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() <= 2 {
         return path;
@@ -229,21 +279,28 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         None => String::new(),
     };
 
+    let typing_indicator = if app.is_typing() { " ●" } else { "" };
+
     let w = area.width as usize;
     let is_narrow = area.height >= 2;
 
-    let left_text = format!(" {} {} ", directory, session_name);
+    let left_text = format!(" {} {}{} ", directory, session_name, typing_indicator);
     let git_text = format!(" {} {} ", branch, upstream);
-    let hints = "^T new ^W close ^G git ^X exit ";
+
+    // Contextual hints based on focused panel
+    let hints = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
+        "^G back  Scroll ↑↓  ^X exit "
+    } else {
+        "^T new ^W close ^G git ^X exit "
+    };
 
     if is_narrow {
-        // Two-line status bar
         let line1_pad = w
             .saturating_sub(left_text.len())
             .saturating_sub(git_text.len());
         let line1 = Line::from(vec![
             Span::styled(
-                left_text,
+                &left_text,
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Cyan)
@@ -251,7 +308,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(" ".repeat(line1_pad), Style::default().bg(Color::DarkGray)),
             Span::styled(
-                git_text,
+                &git_text,
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::DarkGray)
@@ -268,7 +325,6 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let text = Text::from(vec![line1, line2]);
         frame.render_widget(Paragraph::new(text), area);
     } else {
-        // Single-line status bar
         let right = format!("{}{}", git_text, hints);
         let padding = w
             .saturating_sub(left_text.len())
@@ -276,7 +332,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
         let bar = Line::from(vec![
             Span::styled(
-                left_text,
+                &left_text,
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Cyan)
@@ -284,7 +340,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(" ".repeat(padding), Style::default().bg(Color::DarkGray)),
             Span::styled(
-                git_text,
+                &git_text,
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::DarkGray)
@@ -319,7 +375,6 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
             .style(Style::default().bg(Color::Black).fg(Color::White)),
     );
 
-    // Clear area first
     let clear = Paragraph::new("").style(Style::default().bg(Color::Black));
     frame.render_widget(clear, dialog_area);
     frame.render_widget(paragraph, dialog_area);
@@ -362,7 +417,13 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Select Project ")
+            .border_style(Style::default().fg(FOCUSED_BORDER))
+            .title(Span::styled(
+                " Select Project ",
+                Style::default()
+                    .fg(FOCUSED_BORDER)
+                    .add_modifier(Modifier::BOLD),
+            ))
             .style(Style::default().bg(Color::Black).fg(Color::White)),
     );
 

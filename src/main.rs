@@ -10,6 +10,8 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use crossterm::event::DisableMouseCapture;
+use crossterm::event::EnableMouseCapture;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -22,12 +24,14 @@ use input::Action;
 fn main() -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
+    io::stdout().execute(EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let result = run_app(&mut terminal);
 
+    io::stdout().execute(DisableMouseCapture)?;
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
 
@@ -43,30 +47,40 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     let mut app = App::new(config);
     app.init()?;
 
-    // Default: show git panel only on wide terminals
     let size = terminal.size()?;
     app.show_right_panel = size.width >= 100;
 
-    let tick_rate = Duration::from_millis(16); // ~60fps
+    let tick_rate = Duration::from_millis(16);
     let mut last_git_status_refresh = Instant::now();
     let mut last_git_log_refresh = Instant::now();
     let mut last_output_refresh = Instant::now();
+    let mut last_resize = (0u16, 0u16);
 
     let git_status_interval = Duration::from_secs(2);
     let git_log_interval = Duration::from_secs(3);
     let output_interval = Duration::from_millis(100);
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
-        // Refresh output on interval
+        // Resize tmux pane to match our viewport if changed
+        if (app.output_width, app.output_height) != last_resize
+            && app.output_width > 0
+            && app.output_height > 0
+        {
+            if let Some(session) = app.session_manager.active_session() {
+                let name = session.name.clone();
+                let _ = tmux::resize_pane(&name, app.output_width, app.output_height);
+            }
+            last_resize = (app.output_width, app.output_height);
+        }
+
         let now = Instant::now();
         if now.duration_since(last_output_refresh) >= output_interval {
             refresh_output(&mut app);
             last_output_refresh = now;
         }
 
-        // Git refreshes on longer intervals
         if now.duration_since(last_git_status_refresh) >= git_status_interval {
             refresh_git_status(&mut app);
             last_git_status_refresh = now;
@@ -76,7 +90,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             last_git_log_refresh = now;
         }
 
-        // Drain all pending input events (batches chars together)
         let picker_mode = app.show_picker || app.show_close_confirm;
         let actions = input::drain_actions(tick_rate, picker_mode);
 
@@ -124,12 +137,16 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 Action::NextTab => {
                     app.session_manager.next_tab();
                     app.scroll_offset = 0;
+                    app.follow_mode = true;
                     app.refresh_data();
+                    last_resize = (0, 0); // force resize for new session
                 }
                 Action::PrevTab => {
                     app.session_manager.prev_tab();
                     app.scroll_offset = 0;
+                    app.follow_mode = true;
                     app.refresh_data();
+                    last_resize = (0, 0);
                 }
                 Action::NewInstance | Action::ProjectPicker => app.open_picker(),
                 Action::CloseInstance => {
@@ -137,12 +154,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.show_close_confirm = true;
                     }
                 }
-                Action::TogglePanel => app.show_right_panel = !app.show_right_panel,
+                Action::TogglePanel => {
+                    app.show_right_panel = !app.show_right_panel;
+                    last_resize = (0, 0); // viewport size will change
+                }
                 Action::ForwardChars(chars) => {
                     if let Some(session) = app.session_manager.active_session() {
                         let name = session.name.clone();
                         let _ = tmux::send_keys(&name, &chars);
                         did_forward = true;
+                        app.last_input_time = Some(Instant::now());
+                        app.follow_mode = true;
                     }
                 }
                 Action::ForwardSpecial(key) => {
@@ -150,6 +172,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         let name = session.name.clone();
                         let _ = tmux::send_special_key(&name, &key);
                         did_forward = true;
+                        app.last_input_time = Some(Instant::now());
+                        app.follow_mode = true;
                     }
                 }
                 Action::ForwardCtrl(c) => {
@@ -157,6 +181,26 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         let name = session.name.clone();
                         let _ = tmux::send_special_key(&name, &format!("C-{}", c));
                         did_forward = true;
+                        app.last_input_time = Some(Instant::now());
+                        app.follow_mode = true;
+                    }
+                }
+                Action::ScrollUp => {
+                    if app.focus == app::FocusPanel::GitPanel {
+                        app.git_scroll_offset = app.git_scroll_offset.saturating_add(3);
+                    } else {
+                        app.follow_mode = false;
+                        app.scroll_offset = app.scroll_offset.saturating_add(3);
+                    }
+                }
+                Action::ScrollDown => {
+                    if app.focus == app::FocusPanel::GitPanel {
+                        app.git_scroll_offset = app.git_scroll_offset.saturating_sub(3);
+                    } else {
+                        app.scroll_offset = app.scroll_offset.saturating_sub(3);
+                        if app.scroll_offset == 0 {
+                            app.follow_mode = true;
+                        }
                     }
                 }
                 Action::None => {}
@@ -164,7 +208,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             }
         }
 
-        // Immediately refresh output after forwarding input so typing appears fast
         if did_forward {
             refresh_output(&mut app);
             last_output_refresh = Instant::now();

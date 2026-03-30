@@ -1,4 +1,6 @@
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use std::time::Duration;
 
 pub enum Action {
@@ -39,14 +41,20 @@ pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
         if !event::poll(Duration::ZERO).unwrap_or(false) {
             break;
         }
-        if let Ok(Event::Key(key)) = event::read() {
-            let action = map_key(key, picker_mode);
-            match &action {
-                Action::None => {}
-                _ => actions.push(action),
+        match event::read() {
+            Ok(Event::Key(key)) => {
+                let action = map_key(key, picker_mode);
+                match &action {
+                    Action::None => {}
+                    _ => actions.push(action),
+                }
             }
-        } else {
-            break;
+            Ok(Event::Mouse(mouse)) => {
+                if let Some(action) = map_mouse(mouse) {
+                    actions.push(action);
+                }
+            }
+            _ => break,
         }
     }
 
@@ -161,11 +169,19 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         (KeyCode::Right, _) => Action::ForwardSpecial("Right".into()),
         (KeyCode::Home, _) => Action::ForwardSpecial("Home".into()),
         (KeyCode::End, _) => Action::ForwardSpecial("End".into()),
-        (KeyCode::PageUp, _) => Action::ForwardSpecial("PageUp".into()),
-        (KeyCode::PageDown, _) => Action::ForwardSpecial("PageDown".into()),
+        (KeyCode::PageUp, _) => Action::ScrollUp,
+        (KeyCode::PageDown, _) => Action::ScrollDown,
         (KeyCode::Delete, _) => Action::ForwardSpecial("DC".into()),
         (KeyCode::Insert, _) => Action::ForwardSpecial("IC".into()),
         (KeyCode::F(n), _) => Action::ForwardSpecial(format!("F{}", n)),
         _ => Action::None,
+    }
+}
+
+fn map_mouse(mouse: MouseEvent) -> Option<Action> {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => Some(Action::ScrollUp),
+        MouseEventKind::ScrollDown => Some(Action::ScrollDown),
+        _ => None,
     }
 }

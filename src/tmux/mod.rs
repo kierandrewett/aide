@@ -79,6 +79,23 @@ pub fn send_special_key(session_name: &str, key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Resize a tmux pane to match our viewport.
+pub fn resize_pane(session_name: &str, width: u16, height: u16) -> Result<()> {
+    // Set the window size so tmux wraps content correctly
+    let _ = Command::new("tmux")
+        .args([
+            "resize-window",
+            "-t",
+            session_name,
+            "-x",
+            &width.to_string(),
+            "-y",
+            &height.to_string(),
+        ])
+        .output();
+    Ok(())
+}
+
 /// Kill a tmux session by name.
 pub fn kill_session(session_name: &str) -> Result<()> {
     let status = Command::new("tmux")

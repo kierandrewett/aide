@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::Result;
 
@@ -6,6 +7,12 @@ use crate::config::Config;
 use crate::git;
 use crate::sessions::SessionManager;
 use crate::tmux;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum FocusPanel {
+    Output,
+    GitPanel,
+}
 
 pub struct App {
     pub session_manager: SessionManager,
@@ -16,6 +23,7 @@ pub struct App {
     pub git_branch: String,
     pub git_upstream: Option<(usize, usize)>,
     pub scroll_offset: u16,
+    pub follow_mode: bool,
     pub should_quit: bool,
     pub show_close_confirm: bool,
     pub show_picker: bool,
@@ -23,6 +31,11 @@ pub struct App {
     pub picker_selected: usize,
     pub projects_dir: PathBuf,
     pub available_projects: Vec<String>,
+    pub last_input_time: Option<Instant>,
+    pub focus: FocusPanel,
+    pub output_height: u16,
+    pub output_width: u16,
+    pub git_scroll_offset: u16,
 }
 
 impl App {
@@ -39,6 +52,7 @@ impl App {
             git_branch: String::new(),
             git_upstream: None,
             scroll_offset: 0,
+            follow_mode: true,
             should_quit: false,
             show_close_confirm: false,
             show_picker: false,
@@ -46,6 +60,11 @@ impl App {
             picker_selected: 0,
             projects_dir,
             available_projects,
+            last_input_time: None,
+            focus: FocusPanel::Output,
+            output_height: 0,
+            output_width: 0,
+            git_scroll_offset: 0,
         }
     }
 
@@ -133,6 +152,12 @@ impl App {
         if count > 0 {
             self.picker_selected = (self.picker_selected + 1) % count;
         }
+    }
+
+    pub fn is_typing(&self) -> bool {
+        self.last_input_time
+            .map(|t| t.elapsed().as_millis() < 1500)
+            .unwrap_or(false)
     }
 
     pub fn picker_move_up(&mut self) {
