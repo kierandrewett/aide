@@ -14,6 +14,8 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 
+use crossterm::event::{KeyCode, KeyModifiers};
+
 use app::App;
 use input::Action;
 
@@ -93,17 +95,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             last_git_log_refresh = now;
         }
 
-        let action = input::poll_action(tick_rate);
+        let picker_mode = app.show_picker || app.show_close_confirm;
+        let action = input::poll_action(tick_rate, picker_mode);
 
         if app.show_close_confirm {
             match action {
-                Action::Char('y') | Action::Char('Y') => {
+                Action::PickerChar('y') | Action::PickerChar('Y') => {
                     app.show_close_confirm = false;
                     let idx = app.session_manager.active_index;
                     app.session_manager.close_session(idx)?;
                     app.refresh_data();
                 }
-                Action::Char('n') | Action::Char('N') | Action::Cancel => {
+                Action::PickerChar('n') | Action::PickerChar('N') | Action::Cancel => {
                     app.show_close_confirm = false;
                 }
                 _ => {}
@@ -119,11 +122,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 Action::Cancel => {
                     app.close_picker();
                 }
-                Action::Char(c) => {
+                Action::PickerChar(c) => {
                     app.picker_filter.push(c);
                     app.picker_selected = 0;
                 }
-                Action::Backspace => {
+                Action::PickerBackspace => {
                     app.picker_filter.pop();
                     app.picker_selected = 0;
                 }
@@ -169,11 +172,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             Action::TogglePanel => {
                 app.show_right_panel = !app.show_right_panel;
             }
-            Action::ScrollUp => {
-                app.scroll_offset = app.scroll_offset.saturating_sub(3);
-            }
-            Action::ScrollDown => {
-                app.scroll_offset = app.scroll_offset.saturating_add(3);
+            Action::ForwardKey(key) => {
+                if let Some(session) = app.session_manager.active_session() {
+                    let name = session.name.clone();
+                    let _ = forward_key_to_tmux(&name, &key);
+                }
             }
             Action::None => {}
             _ => {}
@@ -184,5 +187,60 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         }
     }
 
+    Ok(())
+}
+
+fn forward_key_to_tmux(session_name: &str, key: &crossterm::event::KeyEvent) -> Result<()> {
+    match (&key.code, key.modifiers) {
+        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => {
+            tmux::send_special_key(session_name, &format!("C-{}", c))?;
+        }
+        (KeyCode::Char(c), _) => {
+            tmux::send_keys(session_name, &c.to_string())?;
+        }
+        (KeyCode::Enter, _) => {
+            tmux::send_special_key(session_name, "Enter")?;
+        }
+        (KeyCode::Backspace, _) => {
+            tmux::send_special_key(session_name, "BSpace")?;
+        }
+        (KeyCode::Esc, _) => {
+            tmux::send_special_key(session_name, "Escape")?;
+        }
+        (KeyCode::Up, _) => {
+            tmux::send_special_key(session_name, "Up")?;
+        }
+        (KeyCode::Down, _) => {
+            tmux::send_special_key(session_name, "Down")?;
+        }
+        (KeyCode::Left, _) => {
+            tmux::send_special_key(session_name, "Left")?;
+        }
+        (KeyCode::Right, _) => {
+            tmux::send_special_key(session_name, "Right")?;
+        }
+        (KeyCode::Home, _) => {
+            tmux::send_special_key(session_name, "Home")?;
+        }
+        (KeyCode::End, _) => {
+            tmux::send_special_key(session_name, "End")?;
+        }
+        (KeyCode::PageUp, _) => {
+            tmux::send_special_key(session_name, "PageUp")?;
+        }
+        (KeyCode::PageDown, _) => {
+            tmux::send_special_key(session_name, "PageDown")?;
+        }
+        (KeyCode::Delete, _) => {
+            tmux::send_special_key(session_name, "DC")?;
+        }
+        (KeyCode::Insert, _) => {
+            tmux::send_special_key(session_name, "IC")?;
+        }
+        (KeyCode::F(n), _) => {
+            tmux::send_special_key(session_name, &format!("F{}", n))?;
+        }
+        _ => {}
+    }
     Ok(())
 }

@@ -2,6 +2,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 
 pub enum Action {
+    // Aide-reserved actions
     NextTab,
     PrevTab,
     NewInstance,
@@ -9,106 +10,99 @@ pub enum Action {
     CloseInstance,
     TogglePanel,
     Exit,
+    // Picker-only actions (only used when picker/dialog is open)
     ScrollUp,
     ScrollDown,
     Confirm,
     Cancel,
-    Char(char),
-    Backspace,
+    PickerChar(char),
+    PickerBackspace,
+    // Forward to tmux
+    ForwardKey(KeyEvent),
     None,
 }
 
 /// Poll for a key event with the given timeout. Returns an Action.
-pub fn poll_action(timeout: Duration) -> Action {
+pub fn poll_action(timeout: Duration, picker_mode: bool) -> Action {
     if event::poll(timeout).unwrap_or(false) {
         if let Ok(Event::Key(key)) = event::read() {
-            return map_key(key);
+            return map_key(key, picker_mode);
         }
     }
     Action::None
 }
 
-fn map_key(key: KeyEvent) -> Action {
+fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
+    // Aide-reserved Ctrl bindings — always intercepted
     match key {
-        // Ctrl bindings
         KeyEvent {
             code: KeyCode::Char('t'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => Action::NewInstance,
+        } => return Action::NewInstance,
         KeyEvent {
             code: KeyCode::Char('p'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => Action::ProjectPicker,
+        } => return Action::ProjectPicker,
         KeyEvent {
             code: KeyCode::Char('w'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => Action::CloseInstance,
+        } => return Action::CloseInstance,
         KeyEvent {
             code: KeyCode::Char('g'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => Action::TogglePanel,
+        } => return Action::TogglePanel,
         KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => Action::Exit,
-        KeyEvent {
-            code: KeyCode::Char('c'),
-            modifiers: KeyModifiers::CONTROL,
-            ..
-        } => Action::Exit,
-
-        // Tab navigation
+        } => return Action::Exit,
+        // Tab switching
         KeyEvent {
             code: KeyCode::Tab,
             modifiers: KeyModifiers::NONE,
             ..
-        } => Action::NextTab,
+        } => return Action::NextTab,
         KeyEvent {
             code: KeyCode::BackTab,
             ..
-        } => Action::PrevTab,
-
-        // Scrolling
-        KeyEvent {
-            code: KeyCode::Up, ..
-        } => Action::ScrollUp,
-        KeyEvent {
-            code: KeyCode::Down,
-            ..
-        } => Action::ScrollDown,
-        KeyEvent {
-            code: KeyCode::PageUp,
-            ..
-        } => Action::ScrollUp,
-        KeyEvent {
-            code: KeyCode::PageDown,
-            ..
-        } => Action::ScrollDown,
-
-        // Text input for picker
-        KeyEvent {
-            code: KeyCode::Enter,
-            modifiers: KeyModifiers::NONE,
-            ..
-        } => Action::Confirm,
-        KeyEvent {
-            code: KeyCode::Esc, ..
-        } => Action::Cancel,
-        KeyEvent {
-            code: KeyCode::Char(c),
-            modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
-            ..
-        } => Action::Char(c),
-        KeyEvent {
-            code: KeyCode::Backspace,
-            ..
-        } => Action::Backspace,
-
-        _ => Action::None,
+        } => return Action::PrevTab,
+        _ => {}
     }
+
+    // When picker/dialog is open, handle input for the picker
+    if picker_mode {
+        return match key {
+            KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            } => Action::Confirm,
+            KeyEvent {
+                code: KeyCode::Esc, ..
+            } => Action::Cancel,
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } => Action::ScrollUp,
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } => Action::ScrollDown,
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                ..
+            } => Action::PickerChar(c),
+            KeyEvent {
+                code: KeyCode::Backspace,
+                ..
+            } => Action::PickerBackspace,
+            _ => Action::None,
+        };
+    }
+
+    // Everything else gets forwarded to tmux
+    Action::ForwardKey(key)
 }

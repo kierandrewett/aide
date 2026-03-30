@@ -55,6 +55,30 @@ pub fn list_sessions() -> Result<Vec<String>> {
     }
 }
 
+/// Send raw key(s) to a tmux session (for passthrough input).
+pub fn send_keys(session_name: &str, keys: &str) -> Result<()> {
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", session_name, "-l", keys])
+        .status()
+        .context("Failed to send keys to tmux session")?;
+    if !status.success() {
+        anyhow::bail!("tmux send-keys (literal) failed for '{}'", session_name);
+    }
+    Ok(())
+}
+
+/// Send a special key (Enter, Escape, etc.) to a tmux session.
+pub fn send_special_key(session_name: &str, key: &str) -> Result<()> {
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", session_name, key])
+        .status()
+        .context("Failed to send special key to tmux session")?;
+    if !status.success() {
+        anyhow::bail!("tmux send-keys (special) failed for '{}'", session_name);
+    }
+    Ok(())
+}
+
 /// Kill a tmux session by name.
 pub fn kill_session(session_name: &str) -> Result<()> {
     let status = Command::new("tmux")
