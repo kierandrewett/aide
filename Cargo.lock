@@ -13,6 +13,7 @@ dependencies = [
  "serde",
  "tokio",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]
