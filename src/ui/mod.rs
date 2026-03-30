@@ -233,8 +233,8 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         area.width.saturating_sub(2) as usize // side borders
     };
 
-    // Compute each tab's display width
-    let tab_widths: Vec<usize> = titles.iter().map(|t| t.width()).collect();
+    // Compute each tab's display width (including " name " padding)
+    let tab_widths: Vec<usize> = titles.iter().map(|t| t.width() + 2).collect();
 
     // Find a window of tabs that fits, centered on the selected tab
     let mut start = 0;
