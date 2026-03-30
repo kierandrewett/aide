@@ -8,6 +8,8 @@ pub struct Session {
     pub project_name: String,
     pub directory: String,
     pub instance_number: u32,
+    pub has_notification: bool,
+    pub last_output_len: usize,
 }
 
 pub struct SessionManager {
@@ -38,6 +40,8 @@ impl SessionManager {
                     project_name: project,
                     directory: dir,
                     instance_number: num,
+                    has_notification: false,
+                    last_output_len: 0,
                 });
             }
         }
@@ -57,6 +61,8 @@ impl SessionManager {
             project_name: project_name.to_string(),
             directory: directory.to_string(),
             instance_number,
+            has_notification: false,
+            last_output_len: 0,
         });
 
         self.active_index = self.sessions.len() - 1;

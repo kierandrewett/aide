@@ -19,7 +19,7 @@ pub fn log_oneline(directory: &str, limit: usize) -> Result<String> {
             "--oneline",
             "--graph",
             "--decorate=short",
-            &format!("--format=%h %d %s (%cr)"),
+            "--format=%h %d %s (%cr)",
             &format!("-{}", limit),
         ])
         .current_dir(directory)

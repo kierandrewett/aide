@@ -174,14 +174,20 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let style = if !welcome_showing && i == app.session_manager.active_index {
+            let is_active = !welcome_showing && i == app.session_manager.active_index;
+            let style = if is_active {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            Line::from(Span::styled(&s.name, style))
+            let label = if s.has_notification && !is_active {
+                format!("🔔 {}", s.name)
+            } else {
+                s.name.clone()
+            };
+            Line::from(Span::styled(label, style))
         })
         .collect();
 
