@@ -90,33 +90,52 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
 }
 
 fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
-    let logo = vec![
-        "",
-        "        ██████╗ ██╗██████╗ ███████╗",
-        "       ██╔══██╗██║██╔══██╗██╔════╝",
-        "       ███████║██║██║  ██║█████╗  ",
-        "       ██╔══██║██║██║  ██║██╔══╝  ",
-        "       ██║  ██║██║██████╔╝███████╗",
-        "       ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝",
-        "",
-    ];
-
     let typing_indicator = if app.is_typing() { " ●" } else { "" };
+
+    // Big logo needs ~40 cols wide and ~14 rows tall (logo + subtitle + hints + padding)
+    let use_big_logo = area.width >= 45 && area.height >= 14;
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Center vertically
-    let logo_height = logo.len() + 6; // logo + subtitle + spacer + hints
-    let v_pad = (area.height as usize).saturating_sub(logo_height) / 2;
-    for _ in 0..v_pad {
-        lines.push(Line::from(""));
-    }
+    if use_big_logo {
+        let logo = vec![
+            "",
+            "        ██████╗ ██╗██████╗ ███████╗",
+            "       ██╔══██╗██║██╔══██╗██╔════╝",
+            "       ███████║██║██║  ██║█████╗  ",
+            "       ██╔══██║██║██║  ██║██╔══╝  ",
+            "       ██║  ██║██║██████╔╝███████╗",
+            "       ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝",
+            "",
+        ];
 
-    for l in &logo {
+        let content_height = logo.len() + 4; // logo + subtitle + blank + hints + blank
+        let v_pad = (area.height as usize).saturating_sub(content_height) / 2;
+        for _ in 0..v_pad {
+            lines.push(Line::from(""));
+        }
+
+        for l in &logo {
+            lines.push(Line::from(Span::styled(
+                *l,
+                Style::default().fg(Color::Cyan),
+            )));
+        }
+    } else {
+        // Compact: just the name, centered vertically
+        let content_height: usize = 5; // title + blank + subtitle + blank + hints
+        let v_pad = (area.height as usize).saturating_sub(content_height) / 2;
+        for _ in 0..v_pad {
+            lines.push(Line::from(""));
+        }
+
         lines.push(Line::from(Span::styled(
-            *l,
-            Style::default().fg(Color::Cyan),
+            "  ── aide ──",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )));
+        lines.push(Line::from(""));
     }
 
     lines.push(Line::from(Span::styled(
