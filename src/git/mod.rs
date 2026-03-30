@@ -11,10 +11,17 @@ pub fn status_short(directory: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Get git log (oneline graph, last 20 commits) for a directory.
+/// Get git log with hash, decoration, relative date, author, message.
 pub fn log_oneline(directory: &str) -> Result<String> {
     let output = Command::new("git")
-        .args(["log", "--oneline", "--graph", "-20"])
+        .args([
+            "log",
+            "--oneline",
+            "--graph",
+            "--decorate=short",
+            "--format=%h %d %s (%cr)",
+            "-30",
+        ])
         .current_dir(directory)
         .output()
         .context("Failed to run git log")?;
@@ -29,6 +36,59 @@ pub fn current_branch(directory: &str) -> Result<String> {
         .output()
         .context("Failed to get current branch")?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Get the remote tracking branch (e.g. "origin/main").
+pub fn remote_tracking_branch(directory: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .current_dir(directory)
+        .output()
+        .context("Failed to get remote tracking branch")?;
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Get working tree diff stats (additions, deletions).
+pub fn diff_stats(directory: &str) -> Option<(usize, usize)> {
+    let output = Command::new("git")
+        .args(["diff", "--numstat"])
+        .current_dir(directory)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut added = 0usize;
+    let mut deleted = 0usize;
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            added += parts[0].parse::<usize>().unwrap_or(0);
+            deleted += parts[1].parse::<usize>().unwrap_or(0);
+        }
+    }
+    // Also include staged changes
+    let staged = Command::new("git")
+        .args(["diff", "--numstat", "--cached"])
+        .current_dir(directory)
+        .output()
+        .ok()?;
+    let staged_text = String::from_utf8_lossy(&staged.stdout);
+    for line in staged_text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            added += parts[0].parse::<usize>().unwrap_or(0);
+            deleted += parts[1].parse::<usize>().unwrap_or(0);
+        }
+    }
+
+    Some((added, deleted))
 }
 
 /// Get push/pull counts relative to upstream.

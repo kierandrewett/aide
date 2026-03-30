@@ -2,10 +2,10 @@ use ansi_to_tui::IntoText;
 use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Paragraph, Tabs},
     Frame,
 };
 
@@ -20,6 +20,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
+    // Show splash screen if no sessions
+    if app.session_manager.sessions.is_empty() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(status_height)])
+            .split(size);
+        draw_splash(frame, app, chunks[0]);
+        draw_status_bar(frame, app, chunks[1]);
+        if app.show_picker {
+            draw_picker(frame, app, size);
+        }
+        return;
+    }
+
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(status_height)])
@@ -29,11 +43,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_area = main_chunks[1];
 
     if app.show_right_panel && is_narrow {
-        // Narrow: git panel fullscreen
-        app.focus = FocusPanel::GitPanel;
         draw_right_panel(frame, app, content_area, is_narrow);
     } else if app.show_right_panel {
-        // Wide: side-by-side
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -42,7 +53,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_left_panel(frame, app, h_chunks[0], tab_height, is_narrow);
         draw_right_panel(frame, app, h_chunks[1], is_narrow);
     } else {
-        app.focus = FocusPanel::Output;
         draw_left_panel(frame, app, content_area, tab_height, is_narrow);
     }
 
@@ -75,6 +85,69 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
         .title(Span::styled(title, title_style))
 }
 
+fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
+    let logo = vec![
+        "",
+        "        ██████╗ ██╗██████╗ ███████╗",
+        "       ██╔══██╗██║██╔══██╗██╔════╝",
+        "       ███████║██║██║  ██║█████╗  ",
+        "       ██╔══██║██║██║  ██║██╔══╝  ",
+        "       ██║  ██║██║██████╔╝███████╗",
+        "       ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝",
+        "",
+    ];
+
+    let typing_indicator = if app.is_typing() { " ●" } else { "" };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Center vertically
+    let logo_height = logo.len() + 6; // logo + subtitle + spacer + hints
+    let v_pad = (area.height as usize).saturating_sub(logo_height) / 2;
+    for _ in 0..v_pad {
+        lines.push(Line::from(""));
+    }
+
+    for l in &logo {
+        lines.push(Line::from(Span::styled(
+            *l,
+            Style::default().fg(Color::Cyan),
+        )));
+    }
+
+    lines.push(Line::from(Span::styled(
+        format!("  Terminal IDE for Claude Code{}", typing_indicator),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Ctrl+T ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("new session   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "Ctrl+P ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("pick project   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "Ctrl+X ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("quit", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
+    frame.render_widget(paragraph, area);
+}
+
 fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect, tab_height: u16, is_narrow: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -95,7 +168,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .map(|(i, s)| {
             let style = if i == app.session_manager.active_index {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
@@ -111,7 +184,6 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     };
 
     let block = if is_narrow {
-        // Minimal: no side/top borders, just a bottom line separator
         Block::default()
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(border_color))
@@ -127,8 +199,8 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .divider(Span::styled(divider, Style::default().fg(Color::DarkGray)))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::DarkGray)
+                .fg(Color::White)
+                .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -138,8 +210,6 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
 fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
 
-    // Track viewport size for tmux resize
-    // On narrow screens we skip side borders, so only top border (from tabs separator) exists
     let border_h: u16 = if is_narrow { 0 } else { 2 };
     let border_w: u16 = if is_narrow { 0 } else { 2 };
     let inner_width = area.width.saturating_sub(border_w);
@@ -157,13 +227,10 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     let total_lines = text.lines.len() as u16;
     let max_scroll_back = total_lines.saturating_sub(inner_height);
 
-    // Clamp scroll_offset to valid range
     if app.scroll_offset > max_scroll_back {
         app.scroll_offset = max_scroll_back;
     }
 
-    // scroll_offset = lines scrolled back from bottom
-    // Convert to top-offset for Paragraph::scroll()
     let top_offset = if app.follow_mode {
         max_scroll_back
     } else {
@@ -189,7 +256,7 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     frame.render_widget(paragraph, area);
 }
 
-fn draw_right_panel(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+fn draw_right_panel(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -199,136 +266,326 @@ fn draw_right_panel(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     draw_git_log(frame, app, chunks[1], is_narrow);
 }
 
-fn draw_git_status(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+fn git_panel_block<'a>(title: &'a str, is_focused: bool, is_narrow: bool) -> Block<'a> {
+    let border_color = if is_focused {
+        FOCUSED_BORDER
+    } else {
+        UNFOCUSED_BORDER
+    };
+    if is_narrow {
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(border_color))
+            .title(Span::styled(title, Style::default().fg(border_color)))
+    } else {
+        focused_block(title, is_focused)
+    }
+}
+
+fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::GitPanel;
-    let lines: Vec<Line> = app
-        .git_status
-        .lines()
-        .map(|line| {
-            let color = if line.starts_with("##") {
-                Color::Cyan
-            } else if line.starts_with(" M") || line.starts_with("M ") {
-                Color::Yellow
-            } else if line.starts_with(" A") || line.starts_with("A ") {
-                Color::Green
-            } else if line.starts_with(" D") || line.starts_with("D ") {
-                Color::Red
-            } else if line.starts_with("??") {
-                Color::DarkGray
-            } else {
-                Color::White
-            };
-            Line::from(Span::styled(line.to_string(), Style::default().fg(color)))
-        })
-        .collect();
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Branch header with local → remote
+    let branch_line = if app.git_remote_branch.is_empty() {
+        Line::from(vec![
+            Span::styled(" ⎇ ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                &app.git_branch,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  (no upstream)", Style::default().fg(Color::DarkGray)),
+        ])
+    } else {
+        let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
+        let sync_icon = if behind == 0 && ahead == 0 {
+            Span::styled(" ✓", Style::default().fg(Color::Green))
+        } else {
+            let mut parts = String::new();
+            if behind > 0 {
+                parts.push_str(&format!(" ↓{}", behind));
+            }
+            if ahead > 0 {
+                parts.push_str(&format!(" ↑{}", ahead));
+            }
+            Span::styled(parts, Style::default().fg(Color::Yellow))
+        };
+        Line::from(vec![
+            Span::styled(" ⎇ ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                &app.git_branch,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" → ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&app.git_remote_branch, Style::default().fg(Color::Blue)),
+            sync_icon,
+        ])
+    };
+    lines.push(branch_line);
+    lines.push(Line::from(""));
+
+    // Parse status lines with icons
+    for line in app.git_status.lines() {
+        if line.starts_with("##") {
+            continue; // skip branch line, we render our own
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Parse the two-char status code
+        let (index_status, worktree_status) = if line.len() >= 2 {
+            (
+                line.chars().next().unwrap_or(' '),
+                line.chars().nth(1).unwrap_or(' '),
+            )
+        } else {
+            (' ', ' ')
+        };
+
+        let filename = if line.len() > 3 { &line[3..] } else { trimmed };
+
+        let (icon, color) = match (index_status, worktree_status) {
+            ('?', '?') => ("  ？ ", Color::DarkGray),       // untracked
+            ('A', _) | (_, 'A') => ("  ＋ ", Color::Green), // added
+            ('D', _) | (_, 'D') => ("  ✕ ", Color::Red),    // deleted
+            ('R', _) => ("  ➜ ", Color::Magenta),           // renamed
+            ('M', _) => ("  ● ", Color::Green),             // staged modified
+            (_, 'M') => ("  ○ ", Color::Yellow),            // unstaged modified
+            ('C', _) => ("  ⊕ ", Color::Cyan),              // copied
+            _ => ("  ∙ ", Color::White),
+        };
+
+        let staged_marker = match index_status {
+            'M' | 'A' | 'D' | 'R' | 'C' => Span::styled(" ✓", Style::default().fg(Color::Green)),
+            _ => Span::raw(""),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(icon, Style::default().fg(color)),
+            Span::styled(filename.to_string(), Style::default().fg(color)),
+            staged_marker,
+        ]));
+    }
+
+    if lines.len() <= 2 {
+        lines.push(Line::from(Span::styled(
+            "  ✓ Working tree clean",
+            Style::default().fg(Color::Green),
+        )));
+    }
 
     let border_overhead: u16 = if is_narrow { 1 } else { 2 };
     let total = lines.len() as u16;
     let visible = area.height.saturating_sub(border_overhead);
     let max_scroll = total.saturating_sub(visible);
-    let scroll = app.git_scroll_offset.min(max_scroll);
+    app.git_status_scroll = app.git_status_scroll.min(max_scroll);
 
-    let block = if is_narrow {
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(if is_focused {
-                FOCUSED_BORDER
-            } else {
-                UNFOCUSED_BORDER
-            }))
-            .title(Span::styled(
-                " Git Status ",
-                Style::default().fg(if is_focused {
-                    FOCUSED_BORDER
-                } else {
-                    UNFOCUSED_BORDER
-                }),
-            ))
-    } else {
-        focused_block(" Git Status ", is_focused)
-    };
+    let block = git_panel_block(" 📋 Status ", is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+        .scroll((app.git_status_scroll, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn draw_git_log(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::GitPanel;
-    let lines: Vec<Line> = app
-        .git_log
-        .lines()
-        .map(|line| {
-            let color = if line.contains('*') {
-                Color::Green
-            } else {
-                Color::White
-            };
-            Line::from(Span::styled(line.to_string(), Style::default().fg(color)))
-        })
-        .collect();
 
-    let block = if is_narrow {
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(if is_focused {
-                FOCUSED_BORDER
+    let mut lines: Vec<Line> = Vec::new();
+
+    for line in app.git_log.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        // Extract the graph prefix (*, |, /, \, spaces) from the rest
+        let mut graph_end = 0;
+        for (i, ch) in line.char_indices() {
+            if matches!(ch, '*' | '|' | '/' | '\\' | ' ') {
+                graph_end = i + ch.len_utf8();
             } else {
-                UNFOCUSED_BORDER
-            }))
-            .title(Span::styled(
-                " Git Log ",
-                Style::default().fg(if is_focused {
-                    FOCUSED_BORDER
+                break;
+            }
+        }
+
+        let graph_part = &line[..graph_end];
+        let rest = &line[graph_end..];
+
+        let mut spans: Vec<Span> = Vec::new();
+
+        let graph_colored = graph_part.to_string();
+        spans.push(Span::styled(
+            graph_colored,
+            Style::default().fg(Color::Blue),
+        ));
+
+        if rest.is_empty() {
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        // Parse: hash (decoration) message (time)
+        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+        if parts.is_empty() {
+            spans.push(Span::raw(rest.to_string()));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        // Hash
+        let hash = parts[0];
+        spans.push(Span::styled(
+            hash.to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+        if parts.len() < 2 {
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        let remainder = parts[1];
+
+        // Check for decoration (refs) like (HEAD -> main, origin/main)
+        if remainder.starts_with('(') {
+            if let Some(close) = remainder.find(')') {
+                let decoration = &remainder[1..close];
+                spans.push(Span::styled(" (", Style::default().fg(Color::DarkGray)));
+
+                // Parse individual refs
+                for (j, ref_name) in decoration.split(", ").enumerate() {
+                    if j > 0 {
+                        spans.push(Span::styled(", ", Style::default().fg(Color::DarkGray)));
+                    }
+                    let ref_name = ref_name.trim();
+                    if ref_name.starts_with("HEAD") {
+                        spans.push(Span::styled(
+                            ref_name.to_string(),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/") {
+                        spans.push(Span::styled(
+                            ref_name.to_string(),
+                            Style::default().fg(Color::Red),
+                        ));
+                    } else if ref_name.starts_with("tag:") {
+                        spans.push(Span::styled(
+                            ref_name.to_string(),
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        spans.push(Span::styled(
+                            ref_name.to_string(),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                }
+                spans.push(Span::styled(") ", Style::default().fg(Color::DarkGray)));
+
+                // Message + time after decoration
+                let after_dec = &remainder[close + 1..].trim_start();
+                if let Some(time_start) = after_dec.rfind('(') {
+                    let msg = &after_dec[..time_start].trim_end();
+                    let time = &after_dec[time_start..];
+                    spans.push(Span::styled(
+                        msg.to_string(),
+                        Style::default().fg(Color::White),
+                    ));
+                    spans.push(Span::styled(
+                        format!(" {}", time),
+                        Style::default().fg(Color::DarkGray),
+                    ));
                 } else {
-                    UNFOCUSED_BORDER
-                }),
-            ))
-    } else {
-        focused_block(" Git Log ", is_focused)
-    };
+                    spans.push(Span::styled(
+                        after_dec.to_string(),
+                        Style::default().fg(Color::White),
+                    ));
+                }
+            } else {
+                spans.push(Span::styled(
+                    format!(" {}", remainder),
+                    Style::default().fg(Color::White),
+                ));
+            }
+        } else {
+            // No decoration — message (time)
+            if let Some(time_start) = remainder.rfind('(') {
+                let msg = &remainder[..time_start].trim_end();
+                let time = &remainder[time_start..];
+                spans.push(Span::styled(
+                    format!(" {}", msg),
+                    Style::default().fg(Color::White),
+                ));
+                spans.push(Span::styled(
+                    format!(" {}", time),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    format!(" {}", remainder),
+                    Style::default().fg(Color::White),
+                ));
+            }
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No commits yet",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let border_overhead: u16 = if is_narrow { 1 } else { 2 };
+    let total = lines.len() as u16;
+    let visible = area.height.saturating_sub(border_overhead);
+    let max_scroll = total.saturating_sub(visible);
+    app.git_log_scroll = app.git_log_scroll.min(max_scroll);
+
+    let block = git_panel_block(" 📜 Log ", is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: false });
+        .scroll((app.git_log_scroll, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn shorten_path(path: &str) -> String {
+fn tilde_path(path: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    let path = if !home.is_empty() && path.starts_with(&home) {
+    if !home.is_empty() && path.starts_with(&home) {
         format!("~{}", &path[home.len()..])
     } else {
         path.to_string()
-    };
-
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() <= 2 {
-        return path;
     }
-    let last = parts.last().unwrap();
-    let shortened: Vec<String> = parts[..parts.len() - 1]
-        .iter()
-        .map(|p| {
-            if p.is_empty() || *p == "~" {
-                p.to_string()
-            } else {
-                p.chars().next().unwrap().to_string()
-            }
-        })
-        .collect();
-    format!("{}/{}", shortened.join("/"), last)
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
-        (shorten_path(&s.directory), s.name.as_str())
+        (tilde_path(&s.directory), s.name.as_str())
     } else {
-        ("~".to_string(), "no session")
+        ("~".to_string(), "aide")
     };
 
     let branch = if app.git_branch.is_empty() {
@@ -337,22 +594,14 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         app.git_branch.clone()
     };
 
-    let upstream = match app.git_upstream {
-        Some((behind, ahead)) => {
-            let mut parts = Vec::new();
-            if behind > 0 {
-                parts.push(format!("⇣{}", behind));
-            }
-            if ahead > 0 {
-                parts.push(format!("⇡{}", ahead));
-            }
-            if parts.is_empty() {
-                "✓".to_string()
-            } else {
-                parts.join(" ")
-            }
-        }
-        None => String::new(),
+    // Always show upstream counts with aligned arrows
+    let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
+    let upstream_text = format!("↓{} ↑{}", behind, ahead);
+
+    // Diff stats: +added -deleted
+    let diff_text = match app.git_diff_stats {
+        Some((added, deleted)) => format!("+{} -{}", added, deleted),
+        None => "+0 -0".to_string(),
     };
 
     let typing_indicator = if app.is_typing() { " ●" } else { "" };
@@ -360,14 +609,19 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let w = area.width as usize;
     let is_narrow = area.height >= 2;
 
-    let left_text = format!(" {} {}{} ", directory, session_name, typing_indicator);
-    let git_text = format!(" {} {} ", branch, upstream);
+    let left_text = format!(" {}{} ", directory, typing_indicator);
+    let git_text = format!(
+        " {} {} {} {} ",
+        branch, upstream_text, diff_text, session_name
+    );
 
-    // Contextual hints based on focused panel
+    // Keybinds with Tab/Shift+Tab
     let hints = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
-        "^G back  Scroll ↑↓  ^X exit "
+        "^G back  ↑↓ scroll  ^X exit "
+    } else if app.session_manager.sessions.is_empty() {
+        "^T new  ^P pick  ^X exit "
     } else {
-        "^T new ^W close ^G git ^X exit "
+        "Tab/S-Tab switch  ^T new  ^W close  ^G git  ^X exit "
     };
 
     let left_w = left_text.width();
@@ -479,7 +733,7 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
         dialog_area,
     );
 
-    let inner_height = dialog_height.saturating_sub(2) as usize; // account for border
+    let inner_height = dialog_height.saturating_sub(2) as usize;
     let mut lines = vec![
         Line::from(Span::styled(
             format!(" Filter: {}_ ", app.picker_filter),
@@ -489,7 +743,7 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     let filtered = app.filtered_projects();
-    let visible_slots = inner_height.saturating_sub(2); // subtract filter line + blank line
+    let visible_slots = inner_height.saturating_sub(2);
     let scroll_start = if app.picker_selected >= visible_slots {
         app.picker_selected - visible_slots + 1
     } else {
@@ -504,8 +758,8 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
     {
         let style = if i == app.picker_selected {
             Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::Black)
+                .fg(Color::White)
+                .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White).bg(Color::Black)
