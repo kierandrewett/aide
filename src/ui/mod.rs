@@ -1,7 +1,8 @@
+use ansi_to_tui::IntoText;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
     Frame,
 };
@@ -87,20 +88,19 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_claude_output(frame: &mut Frame, app: &App, area: Rect) {
-    let content = &app.claude_output;
-    let lines: Vec<Line> = content.lines().map(|l| Line::from(l.to_string())).collect();
-
-    let total_lines = lines.len() as u16;
-    let visible_height = area.height.saturating_sub(2); // borders
+    let text = app
+        .claude_output
+        .as_bytes()
+        .to_vec()
+        .into_text()
+        .unwrap_or_else(|_| Text::raw(&app.claude_output));
+    let total_lines = text.lines.len() as u16;
+    let visible_height = area.height.saturating_sub(2);
     let max_scroll = total_lines.saturating_sub(visible_height);
     let scroll = app.scroll_offset.min(max_scroll);
 
-    let paragraph = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Claude Output "),
-        )
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title(" Output "))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
 
@@ -167,21 +167,44 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let (directory, project, session_name) = if let Some(s) = app.session_manager.active_session() {
-        (
-            s.directory.as_str(),
-            s.project_name.as_str(),
-            s.name.as_str(),
-        )
+fn shorten_path(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let path = if !home.is_empty() && path.starts_with(&home) {
+        format!("~{}", &path[home.len()..])
     } else {
-        ("~", "no project", "no session")
+        path.to_string()
+    };
+
+    // Shorten intermediate directories to first char: ~/dev/myproject -> ~/d/myproject
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() <= 2 {
+        return path;
+    }
+    let last = parts.last().unwrap();
+    let shortened: Vec<String> = parts[..parts.len() - 1]
+        .iter()
+        .map(|p| {
+            if p.is_empty() || *p == "~" {
+                p.to_string()
+            } else {
+                p.chars().next().unwrap().to_string()
+            }
+        })
+        .collect();
+    format!("{}/{}", shortened.join("/"), last)
+}
+
+fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
+        (shorten_path(&s.directory), s.name.as_str())
+    } else {
+        ("~".to_string(), "no session")
     };
 
     let branch = if app.git_branch.is_empty() {
-        "—"
+        "—".to_string()
     } else {
-        &app.git_branch
+        app.git_branch.clone()
     };
 
     let upstream = match app.git_upstream {
@@ -202,28 +225,14 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         None => String::new(),
     };
 
-    let left = format!(" {} │ {} │ {} ", directory, project, session_name);
-    let middle = format!(" {} ", branch);
-    let right_git = format!(" {} ", upstream);
-    let hints = "Tab next │ Ctrl+T new │ Ctrl+W close │ Ctrl+G panel │ Ctrl+X exit ";
-
-    // Build the status bar as a single line
     let total_width = area.width as usize;
-    let left_len = left.len();
-    let middle_len = middle.len();
-    let right_content = format!("{}{}", right_git, hints);
-    let right_len = right_content.len();
 
-    let padding_left = if total_width > left_len + middle_len + right_len {
-        (total_width - left_len - middle_len - right_len) / 2
-    } else {
-        1
-    };
-    let padding_right = total_width
-        .saturating_sub(left_len)
-        .saturating_sub(padding_left)
-        .saturating_sub(middle_len)
-        .saturating_sub(right_len);
+    let left = format!(" {} {} ", directory, session_name);
+    let right_parts = format!(" {} {} ^T new ^W close ^G panel ^X exit ", branch, upstream);
+
+    let padding = total_width
+        .saturating_sub(left.len())
+        .saturating_sub(right_parts.len());
 
     let bar = Line::from(vec![
         Span::styled(
@@ -233,27 +242,16 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(" ".repeat(padding), Style::default().bg(Color::DarkGray)),
         Span::styled(
-            " ".repeat(padding_left),
-            Style::default().bg(Color::DarkGray),
-        ),
-        Span::styled(
-            middle,
+            format!(" {} {} ", branch, upstream),
             Style::default()
                 .fg(Color::White)
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            " ".repeat(padding_right),
-            Style::default().bg(Color::DarkGray),
-        ),
-        Span::styled(
-            right_git,
-            Style::default().fg(Color::Green).bg(Color::DarkGray),
-        ),
-        Span::styled(
-            hints.to_string(),
+            "^T new ^W close ^G panel ^X exit ",
             Style::default().fg(Color::Gray).bg(Color::DarkGray),
         ),
     ]);
