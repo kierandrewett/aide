@@ -16,8 +16,6 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 
-use crossterm::event::{KeyCode, KeyModifiers};
-
 use app::App;
 use input::Action;
 
@@ -45,143 +43,131 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     let mut app = App::new(config);
     app.init()?;
 
-    let tick_rate = Duration::from_millis(100);
+    // Default: show git panel only on wide terminals
+    let size = terminal.size()?;
+    app.show_right_panel = size.width >= 100;
+
+    let tick_rate = Duration::from_millis(16); // ~60fps
     let mut last_git_status_refresh = Instant::now();
     let mut last_git_log_refresh = Instant::now();
     let mut last_output_refresh = Instant::now();
 
     let git_status_interval = Duration::from_secs(2);
     let git_log_interval = Duration::from_secs(3);
-    let output_interval = Duration::from_millis(500);
+    let output_interval = Duration::from_millis(100);
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
+        // Refresh output on interval
         let now = Instant::now();
-
         if now.duration_since(last_output_refresh) >= output_interval {
-            if let Some(session) = app.session_manager.active_session() {
-                let name = session.name.clone();
-                if let Ok(output) = crate::tmux::capture_pane(&name) {
-                    app.claude_output = output;
-                }
-            }
+            refresh_output(&mut app);
             last_output_refresh = now;
         }
 
+        // Git refreshes on longer intervals
         if now.duration_since(last_git_status_refresh) >= git_status_interval {
-            if let Some(session) = app.session_manager.active_session() {
-                let dir = session.directory.clone();
-                if !dir.is_empty() {
-                    if let Ok(status) = crate::git::status_short(&dir) {
-                        app.git_status = status;
-                    }
-                    if let Ok(branch) = crate::git::current_branch(&dir) {
-                        app.git_branch = branch;
-                    }
-                    app.git_upstream = crate::git::upstream_counts(&dir);
-                }
-            }
+            refresh_git_status(&mut app);
             last_git_status_refresh = now;
         }
-
         if now.duration_since(last_git_log_refresh) >= git_log_interval {
-            if let Some(session) = app.session_manager.active_session() {
-                let dir = session.directory.clone();
-                if !dir.is_empty() {
-                    if let Ok(log) = crate::git::log_oneline(&dir) {
-                        app.git_log = log;
-                    }
-                }
-            }
+            refresh_git_log(&mut app);
             last_git_log_refresh = now;
         }
 
+        // Drain all pending input events (batches chars together)
         let picker_mode = app.show_picker || app.show_close_confirm;
-        let action = input::poll_action(tick_rate, picker_mode);
+        let actions = input::drain_actions(tick_rate, picker_mode);
 
-        if app.show_close_confirm {
+        let mut did_forward = false;
+
+        for action in actions {
+            if app.show_close_confirm {
+                match action {
+                    Action::PickerChar('y') | Action::PickerChar('Y') => {
+                        app.show_close_confirm = false;
+                        let idx = app.session_manager.active_index;
+                        app.session_manager.close_session(idx)?;
+                        app.refresh_data();
+                    }
+                    Action::PickerChar('n') | Action::PickerChar('N') | Action::Cancel => {
+                        app.show_close_confirm = false;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            if app.show_picker {
+                match action {
+                    Action::Confirm => app.picker_select_confirm()?,
+                    Action::Cancel => app.close_picker(),
+                    Action::PickerChar(c) => {
+                        app.picker_filter.push(c);
+                        app.picker_selected = 0;
+                    }
+                    Action::PickerBackspace => {
+                        app.picker_filter.pop();
+                        app.picker_selected = 0;
+                    }
+                    Action::ScrollDown | Action::NextTab => app.picker_move_down(),
+                    Action::ScrollUp | Action::PrevTab => app.picker_move_up(),
+                    Action::Exit => app.close_picker(),
+                    _ => {}
+                }
+                continue;
+            }
+
             match action {
-                Action::PickerChar('y') | Action::PickerChar('Y') => {
-                    app.show_close_confirm = false;
-                    let idx = app.session_manager.active_index;
-                    app.session_manager.close_session(idx)?;
+                Action::Exit => app.should_quit = true,
+                Action::NextTab => {
+                    app.session_manager.next_tab();
+                    app.scroll_offset = 0;
                     app.refresh_data();
                 }
-                Action::PickerChar('n') | Action::PickerChar('N') | Action::Cancel => {
-                    app.show_close_confirm = false;
+                Action::PrevTab => {
+                    app.session_manager.prev_tab();
+                    app.scroll_offset = 0;
+                    app.refresh_data();
                 }
+                Action::NewInstance | Action::ProjectPicker => app.open_picker(),
+                Action::CloseInstance => {
+                    if !app.session_manager.sessions.is_empty() {
+                        app.show_close_confirm = true;
+                    }
+                }
+                Action::TogglePanel => app.show_right_panel = !app.show_right_panel,
+                Action::ForwardChars(chars) => {
+                    if let Some(session) = app.session_manager.active_session() {
+                        let name = session.name.clone();
+                        let _ = tmux::send_keys(&name, &chars);
+                        did_forward = true;
+                    }
+                }
+                Action::ForwardSpecial(key) => {
+                    if let Some(session) = app.session_manager.active_session() {
+                        let name = session.name.clone();
+                        let _ = tmux::send_special_key(&name, &key);
+                        did_forward = true;
+                    }
+                }
+                Action::ForwardCtrl(c) => {
+                    if let Some(session) = app.session_manager.active_session() {
+                        let name = session.name.clone();
+                        let _ = tmux::send_special_key(&name, &format!("C-{}", c));
+                        did_forward = true;
+                    }
+                }
+                Action::None => {}
                 _ => {}
             }
-            continue;
         }
 
-        if app.show_picker {
-            match action {
-                Action::Confirm => {
-                    app.picker_select_confirm()?;
-                }
-                Action::Cancel => {
-                    app.close_picker();
-                }
-                Action::PickerChar(c) => {
-                    app.picker_filter.push(c);
-                    app.picker_selected = 0;
-                }
-                Action::PickerBackspace => {
-                    app.picker_filter.pop();
-                    app.picker_selected = 0;
-                }
-                Action::ScrollDown | Action::NextTab => {
-                    app.picker_move_down();
-                }
-                Action::ScrollUp | Action::PrevTab => {
-                    app.picker_move_up();
-                }
-                Action::Exit => {
-                    app.close_picker();
-                }
-                _ => {}
-            }
-            continue;
-        }
-
-        match action {
-            Action::Exit => {
-                app.should_quit = true;
-            }
-            Action::NextTab => {
-                app.session_manager.next_tab();
-                app.scroll_offset = 0;
-                app.refresh_data();
-            }
-            Action::PrevTab => {
-                app.session_manager.prev_tab();
-                app.scroll_offset = 0;
-                app.refresh_data();
-            }
-            Action::NewInstance => {
-                app.open_picker();
-            }
-            Action::ProjectPicker => {
-                app.open_picker();
-            }
-            Action::CloseInstance => {
-                if !app.session_manager.sessions.is_empty() {
-                    app.show_close_confirm = true;
-                }
-            }
-            Action::TogglePanel => {
-                app.show_right_panel = !app.show_right_panel;
-            }
-            Action::ForwardKey(key) => {
-                if let Some(session) = app.session_manager.active_session() {
-                    let name = session.name.clone();
-                    let _ = forward_key_to_tmux(&name, &key);
-                }
-            }
-            Action::None => {}
-            _ => {}
+        // Immediately refresh output after forwarding input so typing appears fast
+        if did_forward {
+            refresh_output(&mut app);
+            last_output_refresh = Instant::now();
         }
 
         if app.should_quit {
@@ -192,57 +178,37 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     Ok(())
 }
 
-fn forward_key_to_tmux(session_name: &str, key: &crossterm::event::KeyEvent) -> Result<()> {
-    match (&key.code, key.modifiers) {
-        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => {
-            tmux::send_special_key(session_name, &format!("C-{}", c))?;
+fn refresh_output(app: &mut App) {
+    if let Some(session) = app.session_manager.active_session() {
+        let name = session.name.clone();
+        if let Ok(output) = tmux::capture_pane(&name) {
+            app.claude_output = output;
         }
-        (KeyCode::Char(c), _) => {
-            tmux::send_keys(session_name, &c.to_string())?;
-        }
-        (KeyCode::Enter, _) => {
-            tmux::send_special_key(session_name, "Enter")?;
-        }
-        (KeyCode::Backspace, _) => {
-            tmux::send_special_key(session_name, "BSpace")?;
-        }
-        (KeyCode::Esc, _) => {
-            tmux::send_special_key(session_name, "Escape")?;
-        }
-        (KeyCode::Up, _) => {
-            tmux::send_special_key(session_name, "Up")?;
-        }
-        (KeyCode::Down, _) => {
-            tmux::send_special_key(session_name, "Down")?;
-        }
-        (KeyCode::Left, _) => {
-            tmux::send_special_key(session_name, "Left")?;
-        }
-        (KeyCode::Right, _) => {
-            tmux::send_special_key(session_name, "Right")?;
-        }
-        (KeyCode::Home, _) => {
-            tmux::send_special_key(session_name, "Home")?;
-        }
-        (KeyCode::End, _) => {
-            tmux::send_special_key(session_name, "End")?;
-        }
-        (KeyCode::PageUp, _) => {
-            tmux::send_special_key(session_name, "PageUp")?;
-        }
-        (KeyCode::PageDown, _) => {
-            tmux::send_special_key(session_name, "PageDown")?;
-        }
-        (KeyCode::Delete, _) => {
-            tmux::send_special_key(session_name, "DC")?;
-        }
-        (KeyCode::Insert, _) => {
-            tmux::send_special_key(session_name, "IC")?;
-        }
-        (KeyCode::F(n), _) => {
-            tmux::send_special_key(session_name, &format!("F{}", n))?;
-        }
-        _ => {}
     }
-    Ok(())
+}
+
+fn refresh_git_status(app: &mut App) {
+    if let Some(session) = app.session_manager.active_session() {
+        let dir = session.directory.clone();
+        if !dir.is_empty() {
+            if let Ok(status) = git::status_short(&dir) {
+                app.git_status = status;
+            }
+            if let Ok(branch) = git::current_branch(&dir) {
+                app.git_branch = branch;
+            }
+            app.git_upstream = git::upstream_counts(&dir);
+        }
+    }
+}
+
+fn refresh_git_log(app: &mut App) {
+    if let Some(session) = app.session_manager.active_session() {
+        let dir = session.directory.clone();
+        if !dir.is_empty() {
+            if let Ok(log) = git::log_oneline(&dir) {
+                app.git_log = log;
+            }
+        }
+    }
 }

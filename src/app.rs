@@ -32,7 +32,7 @@ impl App {
 
         Self {
             session_manager: SessionManager::new(config.command),
-            show_right_panel: true,
+            show_right_panel: false,
             claude_output: String::new(),
             git_status: String::new(),
             git_log: String::new(),
