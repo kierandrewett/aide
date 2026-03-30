@@ -272,6 +272,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     let size = terminal.size().unwrap_or_default();
                     if app.show_right_panel && size.width < 100 {
                         app.show_right_panel = false;
+                        app.focus = app::FocusPanel::Output;
                         last_resize = (0, 0);
                     } else if let Some(session) = app.session_manager.active_session() {
                         let name = session.name.clone();
@@ -281,8 +282,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ScrollUp => {
-                    if app.focus == app::FocusPanel::GitPanel {
-                        // Scroll both git panels together
+                    let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
+                    if scroll_git {
                         app.git_status_scroll = app.git_status_scroll.saturating_sub(3);
                         app.git_log_scroll = app.git_log_scroll.saturating_sub(3);
                     } else {
@@ -293,7 +294,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ScrollDown => {
-                    if app.focus == app::FocusPanel::GitPanel {
+                    let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
+                    if scroll_git {
                         app.git_status_scroll = app.git_status_scroll.saturating_add(3);
                         app.git_log_scroll = app.git_log_scroll.saturating_add(3);
 
