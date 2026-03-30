@@ -8,5 +8,6 @@ ratatui = "0.28"
 crossterm = "0.28"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+ansi-to-tui = "6"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

@@ -28,7 +28,7 @@ pub fn run_command(session_name: &str, command: &str) -> Result<()> {
 /// Capture the current pane output from a tmux session.
 pub fn capture_pane(session_name: &str) -> Result<String> {
     let output = Command::new("tmux")
-        .args(["capture-pane", "-pt", session_name, "-S", "-200"])
+        .args(["capture-pane", "-ept", session_name, "-S", "-200"])
         .output()
         .context("Failed to capture tmux pane")?;
     if !output.status.success() {

@@ -14,7 +14,7 @@ impl Default for Config {
     fn default() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         Self {
-            command: "claude-run claude".to_string(),
+            command: "claude".to_string(),
             projects_dir: format!("{}/dev", home),
         }
     }

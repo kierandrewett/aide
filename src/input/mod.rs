@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::time::Duration;
 
 pub enum Action {
@@ -33,6 +33,11 @@ pub fn poll_action(timeout: Duration, picker_mode: bool) -> Action {
 }
 
 fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
+    // Only handle key press events, not release/repeat
+    if key.kind != KeyEventKind::Press {
+        return Action::None;
+    }
+
     // Aide-reserved Ctrl bindings — always intercepted
     match key {
         KeyEvent {
