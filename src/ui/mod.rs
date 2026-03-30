@@ -416,7 +416,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else if app.session_manager.sessions.is_empty() {
         "^T new  ^P pick  ^X exit "
     } else {
-        "Tab/S-Tab switch  ^T new  ^G git  ^X exit "
+        "Tab/S-Tab switch  ^T new  ^W close  ^G git  ^X exit "
     };
 
     let left_w = left_text.width();
