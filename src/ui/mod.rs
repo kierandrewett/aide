@@ -180,10 +180,10 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let (project, session_name) = if let Some(s) = app.session_manager.active_session() {
-        (s.project_name.as_str(), s.name.as_str())
+    let (directory, project, session_name) = if let Some(s) = app.session_manager.active_session() {
+        (s.directory.as_str(), s.project_name.as_str(), s.name.as_str())
     } else {
-        ("no project", "no session")
+        ("~", "no project", "no session")
     };
 
     let branch = if app.git_branch.is_empty() {
@@ -210,7 +210,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         None => String::new(),
     };
 
-    let left = format!(" {} │ {} ", project, session_name);
+    let left = format!(" {} │ {} │ {} ", directory, project, session_name);
     let middle = format!(" {} ", branch);
     let right_git = format!(" {} ", upstream);
     let hints = "Tab next │ Ctrl+T new │ Ctrl+W close │ Ctrl+G panel │ Ctrl+X exit ";
