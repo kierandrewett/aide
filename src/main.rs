@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod git;
 mod input;
 mod sessions;
@@ -36,7 +37,8 @@ fn main() -> Result<()> {
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    let mut app = App::new();
+    let config = config::Config::load()?;
+    let mut app = App::new(config);
     app.init()?;
 
     let tick_rate = Duration::from_millis(100);

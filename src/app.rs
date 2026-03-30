@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
+use crate::config::Config;
 use crate::git;
 use crate::sessions::SessionManager;
 use crate::tmux;
@@ -25,17 +26,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
-        let projects_dir = std::env::var("AIDE_PROJECTS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs_or_home().join("dev")
-            });
-
+    pub fn new(config: Config) -> Self {
+        let projects_dir = PathBuf::from(&config.projects_dir);
         let available_projects = discover_projects(&projects_dir);
 
         Self {
-            session_manager: SessionManager::new(),
+            session_manager: SessionManager::new(config.command),
             show_right_panel: true,
             claude_output: String::new(),
             git_status: String::new(),
@@ -147,12 +143,6 @@ impl App {
             };
         }
     }
-}
-
-fn dirs_or_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn discover_projects(dir: &PathBuf) -> Vec<String> {
