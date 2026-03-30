@@ -102,7 +102,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.show_close_confirm = false;
                         let idx = app.session_manager.active_index;
                         app.session_manager.close_session(idx)?;
-                        app.refresh_data();
+                        if app.session_manager.sessions.is_empty() {
+                            app.should_quit = true;
+                        } else {
+                            app.refresh_data();
+                        }
                     }
                     Action::PickerChar('n') | Action::PickerChar('N') | Action::Cancel => {
                         app.show_close_confirm = false;
