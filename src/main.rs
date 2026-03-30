@@ -285,20 +285,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 Action::ScrollUp => {
                     let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
                     if scroll_git {
-                        app.git_status_scroll = app.git_status_scroll.saturating_sub(3);
-                        app.git_log_scroll = app.git_log_scroll.saturating_sub(3);
-                    } else {
-                        app.scroll_offset = app.scroll_offset.saturating_sub(3);
-                        if app.scroll_offset == 0 {
-                            app.follow_mode = true;
-                        }
-                    }
-                }
-                Action::ScrollDown => {
-                    let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
-                    if scroll_git {
-                        app.git_status_scroll = app.git_status_scroll.saturating_add(3);
-                        app.git_log_scroll = app.git_log_scroll.saturating_add(3);
+                        app.git_status_scroll = app.git_status_scroll.saturating_add(1);
+                        app.git_log_scroll = app.git_log_scroll.saturating_add(1);
 
                         // Lazy load: fetch more log when near bottom
                         let log_lines = app.git_log.lines().count() as u16;
@@ -307,8 +295,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             refresh_git_log(&mut app);
                         }
                     } else {
+                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
+                        if app.scroll_offset == 0 {
+                            app.follow_mode = true;
+                        }
+                    }
+                }
+                Action::ScrollDown => {
+                    let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
+                    if scroll_git {
+                        app.git_status_scroll = app.git_status_scroll.saturating_sub(1);
+                        app.git_log_scroll = app.git_log_scroll.saturating_sub(1);
+                    } else {
                         app.follow_mode = false;
-                        app.scroll_offset = app.scroll_offset.saturating_add(3);
+                        app.scroll_offset = app.scroll_offset.saturating_add(1);
                     }
                 }
                 Action::None => {}

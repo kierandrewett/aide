@@ -164,7 +164,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
     let on_welcome = app.is_on_welcome();
 
@@ -236,61 +236,89 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     // Compute each tab's display width (including " name " padding)
     let tab_widths: Vec<usize> = titles.iter().map(|t| t.width() + 2).collect();
 
-    // Find a window of tabs that fits, centered on the selected tab
-    let mut start = 0;
+    // Stable scroll offset — only shift when selected tab is out of view
+    let arrow_w = 2; // "◀ " or " ▶"
+    let total_w: usize =
+        tab_widths.iter().sum::<usize>() + titles.len().saturating_sub(1) * divider_w;
+
+    let mut start = app.tab_scroll_offset;
+    #[allow(unused_assignments)]
     let mut end = titles.len();
 
-    // Indicators take space: "◀ " = 2, " ▶" = 2
-    let arrow_w = 2;
+    let needs_overflow = total_w > inner_w;
 
-    // Shrink window to fit
-    if titles.len() > 1 {
-        // Total width of all tabs with dividers
-        let total_w: usize =
-            tab_widths.iter().sum::<usize>() + (titles.len().saturating_sub(1)) * divider_w;
-
-        if total_w > inner_w {
-            // Need to truncate — find window around selected
+    if needs_overflow && !titles.is_empty() {
+        // Ensure selected tab is visible by adjusting scroll offset
+        if selected < start {
             start = selected;
-            end = selected + 1;
-            let mut used = tab_widths[selected];
+        }
 
-            // Expand left and right alternately
-            loop {
-                let left_space = if start > 0 { arrow_w } else { 0 };
+        // Find how many tabs fit from `start`
+        end = start;
+        let mut used = 0usize;
+        #[allow(clippy::needless_range_loop)]
+        for i in start..titles.len() {
+            let left_space = if i > 0 && start > 0 { arrow_w } else { 0 };
+            let right_space = arrow_w; // assume more to the right
+            let budget = inner_w.saturating_sub(left_space + right_space);
+
+            let cost = if i == start {
+                tab_widths[i]
+            } else {
+                divider_w + tab_widths[i]
+            };
+            if used + cost > budget && i > selected {
+                break;
+            }
+            used += cost;
+            end = i + 1;
+        }
+
+        // If selected is past the visible end, shift start right
+        if selected >= end {
+            end = selected + 1;
+            used = tab_widths[selected];
+            start = selected;
+            // Expand left to fill
+            while start > 0 {
+                let left_space = if start - 1 > 0 { arrow_w } else { 0 };
                 let right_space = if end < titles.len() { arrow_w } else { 0 };
                 let budget = inner_w.saturating_sub(left_space + right_space);
-
-                let mut expanded = false;
-
-                // Try expanding right
-                if end < titles.len() {
-                    let cost = divider_w + tab_widths[end];
-                    if used + cost <= budget {
-                        used += cost;
-                        end += 1;
-                        expanded = true;
-                    }
-                }
-
-                // Try expanding left
-                if start > 0 {
-                    let cost = divider_w + tab_widths[start - 1];
-                    let left_space2 = if start - 1 > 0 { arrow_w } else { 0 };
-                    let right_space2 = if end < titles.len() { arrow_w } else { 0 };
-                    let budget2 = inner_w.saturating_sub(left_space2 + right_space2);
-                    if used + cost <= budget2 {
-                        used += cost;
-                        start -= 1;
-                        expanded = true;
-                    }
-                }
-
-                if !expanded {
+                let cost = divider_w + tab_widths[start - 1];
+                if used + cost > budget {
                     break;
                 }
+                used += cost;
+                start -= 1;
             }
         }
+
+        // Recalculate: if we're at the end, no right arrow needed — try fitting more
+        if end >= titles.len() {
+            let right_space = 0;
+            let left_space = if start > 0 { arrow_w } else { 0 };
+            let budget = inner_w.saturating_sub(left_space + right_space);
+            let mut recalc_used: usize = tab_widths[start..end].iter().sum::<usize>()
+                + (end - start).saturating_sub(1) * divider_w;
+            while start > 0 {
+                let new_left = if start - 1 > 0 { arrow_w } else { 0 };
+                let new_budget = inner_w.saturating_sub(new_left);
+                let cost = divider_w + tab_widths[start - 1];
+                if recalc_used + cost > new_budget {
+                    break;
+                }
+                recalc_used += cost;
+                start -= 1;
+            }
+            let _ = budget; // used above
+        }
+
+        // Update the persistent scroll offset
+        app.tab_scroll_offset = start;
+    } else {
+        start = 0;
+        end = titles.len();
+        app.tab_scroll_offset = 0;
     }
 
     let has_left = start > 0;
@@ -763,10 +791,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         (left, git, h)
     } else {
-        let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
-            (tilde_path(&s.directory), s.name.as_str())
+        let directory = if let Some(s) = app.session_manager.active_session() {
+            tilde_path(&s.directory)
         } else {
-            ("~".to_string(), "aide")
+            "~".to_string()
         };
 
         let branch = if app.git_branch.is_empty() {
@@ -786,10 +814,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let typing_indicator = if app.is_typing() { " ●" } else { "" };
 
         let left = format!(" {}{} ", directory, typing_indicator);
-        let git = format!(
-            " {} {} {} {} ",
-            branch, upstream_text, diff_text, session_name
-        );
+        let git = format!(" {} {} {} ", branch, upstream_text, diff_text);
 
         let h = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
             "^G back  ↑↓ scroll  ^X exit "
@@ -868,6 +893,20 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
     let y = (area.height.saturating_sub(dialog_height)) / 2;
     let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
 
+    // Solid background clear
+    let clear_lines: Vec<Line> = (0..dialog_height)
+        .map(|_| {
+            Line::from(Span::styled(
+                " ".repeat(dialog_width as usize),
+                Style::default().bg(Color::Black),
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(clear_lines).style(Style::default().bg(Color::Black)),
+        dialog_area,
+    );
+
     let text = vec![
         Line::from(""),
         Line::from(Span::styled(
@@ -879,12 +918,16 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
     let paragraph = Paragraph::new(text).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Confirm ")
+            .border_style(Style::default().fg(FOCUSED_BORDER))
+            .title(Span::styled(
+                " Confirm ",
+                Style::default()
+                    .fg(FOCUSED_BORDER)
+                    .add_modifier(Modifier::BOLD),
+            ))
             .style(Style::default().bg(Color::Black).fg(Color::White)),
     );
 
-    let clear = Paragraph::new("").style(Style::default().bg(Color::Black));
-    frame.render_widget(clear, dialog_area);
     frame.render_widget(paragraph, dialog_area);
 }
 
