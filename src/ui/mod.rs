@@ -791,10 +791,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         (left, git, h)
     } else {
-        let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
-            (tilde_path(&s.directory), s.name.as_str())
+        let directory = if let Some(s) = app.session_manager.active_session() {
+            tilde_path(&s.directory)
         } else {
-            ("~".to_string(), "aide")
+            "~".to_string()
         };
 
         let branch = if app.git_branch.is_empty() {
@@ -814,10 +814,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let typing_indicator = if app.is_typing() { " ●" } else { "" };
 
         let left = format!(" {}{} ", directory, typing_indicator);
-        let git = format!(
-            " {} {} {} {} ",
-            branch, upstream_text, diff_text, session_name
-        );
+        let git = format!(" {} {} {} ", branch, upstream_text, diff_text);
 
         let h = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
             "^G back  ↑↓ scroll  ^X exit "
