@@ -147,13 +147,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             match action {
                 Action::Exit => app.should_quit = true,
                 Action::NextTab => {
-                    if app.show_welcome && !app.session_manager.sessions.is_empty() {
-                        app.show_welcome = false;
-                        app.session_manager.active_index = 0;
-                    } else if !app.show_welcome {
-                        let next = app.session_manager.active_index + 1;
+                    // Total tabs = sessions + (1 if welcome open)
+                    let total =
+                        app.session_manager.sessions.len() + if app.show_welcome { 1 } else { 0 };
+                    if total > 0 {
+                        let cur = if app.is_on_welcome() {
+                            app.session_manager.sessions.len()
+                        } else {
+                            app.session_manager.active_index
+                        };
+                        let next = (cur + 1) % total;
                         if next >= app.session_manager.sessions.len() {
-                            app.session_manager.active_index = 0;
+                            // Landing on the welcome tab
+                            app.session_manager.active_index = next;
                         } else {
                             app.session_manager.active_index = next;
                         }
@@ -168,16 +174,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     last_resize = (0, 0);
                 }
                 Action::PrevTab => {
-                    if app.show_welcome && !app.session_manager.sessions.is_empty() {
-                        app.show_welcome = false;
-                        app.session_manager.active_index =
-                            app.session_manager.sessions.len().saturating_sub(1);
-                    } else if !app.show_welcome {
-                        if app.session_manager.active_index == 0 {
-                            app.session_manager.active_index =
-                                app.session_manager.sessions.len().saturating_sub(1);
+                    let total =
+                        app.session_manager.sessions.len() + if app.show_welcome { 1 } else { 0 };
+                    if total > 0 {
+                        let cur = if app.is_on_welcome() {
+                            app.session_manager.sessions.len()
                         } else {
-                            app.session_manager.active_index -= 1;
+                            app.session_manager.active_index
+                        };
+                        let prev = if cur == 0 { total - 1 } else { cur - 1 };
+                        if prev >= app.session_manager.sessions.len() {
+                            // Landing on the welcome tab
+                            app.session_manager.active_index = prev;
+                        } else {
+                            app.session_manager.active_index = prev;
                         }
                     }
                     clear_active_notification(&mut app);
@@ -195,13 +205,23 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::ProjectPicker => app.open_picker(),
                 Action::CloseInstance => {
-                    if app.show_welcome && !app.session_manager.sessions.is_empty() {
-                        // Close welcome tab without confirmation, switch to session
-                        app.show_welcome = false;
-                    } else if !app.show_welcome && !app.session_manager.sessions.is_empty() {
+                    if app.is_on_welcome() {
+                        if !app.session_manager.sessions.is_empty() {
+                            // Close welcome tab, go to nearest session
+                            app.show_welcome = false;
+                            if app.session_manager.active_index
+                                >= app.session_manager.sessions.len()
+                            {
+                                app.session_manager.active_index =
+                                    app.session_manager.sessions.len().saturating_sub(1);
+                            }
+                            app.refresh_data();
+                            last_resize = (0, 0);
+                        }
+                        // If no sessions, can't close the only tab
+                    } else if !app.session_manager.sessions.is_empty() {
                         app.show_close_confirm = true;
                     }
-                    // If welcome + no sessions, nothing to close
                 }
                 Action::TogglePanel => {
                     if app.show_right_panel && app.focus == app::FocusPanel::GitPanel {
@@ -252,6 +272,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     let size = terminal.size().unwrap_or_default();
                     if app.show_right_panel && size.width < 100 {
                         app.show_right_panel = false;
+                        app.focus = app::FocusPanel::Output;
                         last_resize = (0, 0);
                     } else if let Some(session) = app.session_manager.active_session() {
                         let name = session.name.clone();
@@ -261,8 +282,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ScrollUp => {
-                    if app.focus == app::FocusPanel::GitPanel {
-                        // Scroll both git panels together
+                    let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
+                    if scroll_git {
                         app.git_status_scroll = app.git_status_scroll.saturating_sub(3);
                         app.git_log_scroll = app.git_log_scroll.saturating_sub(3);
                     } else {
@@ -273,7 +294,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ScrollDown => {
-                    if app.focus == app::FocusPanel::GitPanel {
+                    let scroll_git = app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
+                    if scroll_git {
                         app.git_status_scroll = app.git_status_scroll.saturating_add(3);
                         app.git_log_scroll = app.git_log_scroll.saturating_add(3);
 
