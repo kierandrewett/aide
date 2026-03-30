@@ -75,11 +75,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let tabs = Tabs::new(titles)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Sessions "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" Sessions "))
         .select(app.session_manager.active_index)
         .highlight_style(
             Style::default()
@@ -144,11 +140,7 @@ fn draw_git_status(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let paragraph = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Git Status "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" Git Status "))
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
@@ -169,11 +161,7 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let paragraph = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Git Log "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" Git Log "))
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
@@ -181,7 +169,11 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let (directory, project, session_name) = if let Some(s) = app.session_manager.active_session() {
-        (s.directory.as_str(), s.project_name.as_str(), s.name.as_str())
+        (
+            s.directory.as_str(),
+            s.project_name.as_str(),
+            s.name.as_str(),
+        )
     } else {
         ("~", "no project", "no session")
     };
