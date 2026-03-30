@@ -79,7 +79,9 @@ impl App {
                 self.git_upstream = git::upstream_counts(&dir);
             }
         } else {
-            self.claude_output = "No active session. Press Ctrl+T to create one or Ctrl+P to pick a project.".to_string();
+            self.claude_output =
+                "No active session. Press Ctrl+T to create one or Ctrl+P to pick a project."
+                    .to_string();
             self.git_status.clear();
             self.git_log.clear();
             self.git_branch.clear();
