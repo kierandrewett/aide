@@ -1,4 +1,6 @@
 use ansi_to_tui::IntoText;
+use unicode_width::UnicodeWidthStr;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -130,26 +132,32 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect) {
         .unwrap_or_else(|_| Text::raw(&app.claude_output));
 
     let total_lines = text.lines.len() as u16;
+    let max_scroll_back = total_lines.saturating_sub(inner_height);
 
-    // Auto-scroll: in follow mode, always show bottom
-    let scroll = if app.follow_mode {
-        total_lines.saturating_sub(inner_height)
+    // Clamp scroll_offset to valid range
+    if app.scroll_offset > max_scroll_back {
+        app.scroll_offset = max_scroll_back;
+    }
+
+    // scroll_offset = lines scrolled back from bottom
+    // Convert to top-offset for Paragraph::scroll()
+    let top_offset = if app.follow_mode {
+        max_scroll_back
     } else {
-        let max_scroll = total_lines.saturating_sub(inner_height);
-        app.scroll_offset.min(max_scroll)
+        max_scroll_back.saturating_sub(app.scroll_offset)
     };
 
-    // Build title with typing indicator
     let title = if app.is_typing() {
         " Output  ● "
+    } else if !app.follow_mode {
+        " Output  ↑ scroll "
     } else {
         " Output "
     };
 
     let paragraph = Paragraph::new(text)
         .block(focused_block(title, is_focused))
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+        .scroll((top_offset, 0));
 
     frame.render_widget(paragraph, area);
 }
@@ -294,10 +302,12 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         "^T new ^W close ^G git ^X exit "
     };
 
+    let left_w = left_text.width();
+    let git_w = git_text.width();
+    let hints_w = hints.width();
+
     if is_narrow {
-        let line1_pad = w
-            .saturating_sub(left_text.len())
-            .saturating_sub(git_text.len());
+        let line1_pad = w.saturating_sub(left_w).saturating_sub(git_w);
         let line1 = Line::from(vec![
             Span::styled(
                 &left_text,
@@ -316,7 +326,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
         ]);
 
-        let line2_pad = w.saturating_sub(hints.len());
+        let line2_pad = w.saturating_sub(hints_w);
         let line2 = Line::from(vec![
             Span::styled(" ".repeat(line2_pad), Style::default().bg(Color::DarkGray)),
             Span::styled(hints, Style::default().fg(Color::Gray).bg(Color::DarkGray)),
@@ -325,10 +335,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let text = Text::from(vec![line1, line2]);
         frame.render_widget(Paragraph::new(text), area);
     } else {
-        let right = format!("{}{}", git_text, hints);
         let padding = w
-            .saturating_sub(left_text.len())
-            .saturating_sub(right.len());
+            .saturating_sub(left_w)
+            .saturating_sub(git_w)
+            .saturating_sub(hints_w);
 
         let bar = Line::from(vec![
             Span::styled(

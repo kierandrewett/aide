@@ -11,3 +11,4 @@ anyhow = "1"
 ansi-to-tui = "6"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+unicode-width = "0.1"
