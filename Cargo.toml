@@ -1,0 +1,10 @@
+[package]
+name = "aide"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.28"
+crossterm = "0.28"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
