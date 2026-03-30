@@ -171,6 +171,15 @@ impl App {
         }
     }
 
+    /// Whether the welcome tab is currently the active/visible tab.
+    pub fn is_on_welcome(&self) -> bool {
+        if self.session_manager.sessions.is_empty() {
+            return true;
+        }
+        self.show_welcome
+            && self.session_manager.active_index >= self.session_manager.sessions.len()
+    }
+
     pub fn is_typing(&self) -> bool {
         self.last_input_time
             .map(|t| t.elapsed().as_millis() < 1500)

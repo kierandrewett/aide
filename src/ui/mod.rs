@@ -37,7 +37,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_tabs(frame, app, tab_chunks[0], is_narrow);
     let body_area = tab_chunks[1];
 
-    if app.show_welcome || app.session_manager.sessions.is_empty() {
+    if app.is_on_welcome() {
         draw_splash(frame, app, body_area);
         draw_status_bar(frame, app, status_area);
         if app.show_picker {
@@ -166,7 +166,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
-    let welcome_showing = app.show_welcome || app.session_manager.sessions.is_empty();
+    let on_welcome = app.is_on_welcome();
 
     let mut titles: Vec<Line> = app
         .session_manager
@@ -174,7 +174,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let is_active = !welcome_showing && i == app.session_manager.active_index;
+            let is_active = !on_welcome && i == app.session_manager.active_index;
             let style = if is_active {
                 Style::default()
                     .fg(Color::White)
@@ -191,19 +191,21 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         })
         .collect();
 
-    // Add the welcome tab
-    if welcome_showing {
-        titles.push(Line::from(Span::styled(
-            "aide",
+    // Add the welcome tab if it exists
+    if app.show_welcome || app.session_manager.sessions.is_empty() {
+        let style = if on_welcome {
             Style::default()
                 .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )));
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        titles.push(Line::from(Span::styled("aide", style)));
     }
 
-    // Selected index: welcome tab is at the end
-    let selected = if welcome_showing {
-        titles.len() - 1
+    // Selected index
+    let selected = if on_welcome {
+        titles.len().saturating_sub(1)
     } else {
         app.session_manager.active_index
     };
@@ -639,7 +641,7 @@ fn tilde_path(path: &str) -> String {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let on_splash = app.show_welcome || app.session_manager.sessions.is_empty();
+    let on_splash = app.is_on_welcome();
 
     let w = area.width as usize;
     let is_narrow = area.height >= 2;
