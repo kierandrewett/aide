@@ -187,20 +187,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::ScrollUp => {
                     if app.focus == app::FocusPanel::GitPanel {
-                        app.git_scroll_offset = app.git_scroll_offset.saturating_add(3);
-                    } else {
-                        app.follow_mode = false;
-                        app.scroll_offset = app.scroll_offset.saturating_add(3);
-                    }
-                }
-                Action::ScrollDown => {
-                    if app.focus == app::FocusPanel::GitPanel {
                         app.git_scroll_offset = app.git_scroll_offset.saturating_sub(3);
                     } else {
                         app.scroll_offset = app.scroll_offset.saturating_sub(3);
                         if app.scroll_offset == 0 {
                             app.follow_mode = true;
                         }
+                    }
+                }
+                Action::ScrollDown => {
+                    if app.focus == app::FocusPanel::GitPanel {
+                        app.git_scroll_offset = app.git_scroll_offset.saturating_add(3);
+                    } else {
+                        app.follow_mode = false;
+                        app.scroll_offset = app.scroll_offset.saturating_add(3);
                     }
                 }
                 Action::None => {}
