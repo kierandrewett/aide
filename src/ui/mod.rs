@@ -20,20 +20,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
-    // Show splash screen when no sessions exist
-    if app.session_manager.sessions.is_empty() {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(status_height)])
-            .split(size);
-        draw_splash(frame, app, chunks[0]);
-        draw_status_bar(frame, app, chunks[1]);
-        if app.show_picker {
-            draw_picker(frame, app, size);
-        }
-        return;
-    }
-
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(status_height)])
@@ -42,18 +28,36 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let content_area = main_chunks[0];
     let status_area = main_chunks[1];
 
+    // Always show tab bar + content; welcome is just the content of a special tab
+    let tab_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
+        .split(content_area);
+
+    draw_tabs(frame, app, tab_chunks[0], is_narrow);
+    let body_area = tab_chunks[1];
+
+    if app.show_welcome || app.session_manager.sessions.is_empty() {
+        draw_splash(frame, app, body_area);
+        draw_status_bar(frame, app, status_area);
+        if app.show_picker {
+            draw_picker(frame, app, size);
+        }
+        return;
+    }
+
     if app.show_right_panel && is_narrow {
-        draw_right_panel(frame, app, content_area, is_narrow);
+        draw_right_panel(frame, app, body_area, is_narrow);
     } else if app.show_right_panel {
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(content_area);
+            .split(body_area);
 
-        draw_left_panel(frame, app, h_chunks[0], tab_height, is_narrow);
+        draw_claude_output(frame, app, h_chunks[0], is_narrow);
         draw_right_panel(frame, app, h_chunks[1], is_narrow);
     } else {
-        draw_left_panel(frame, app, content_area, tab_height, is_narrow);
+        draw_claude_output(frame, app, body_area, is_narrow);
     }
 
     draw_status_bar(frame, app, status_area);
@@ -141,25 +145,17 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect, tab_height: u16, is_narrow: bool) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
-        .split(area);
-
-    draw_tabs(frame, app, chunks[0], is_narrow);
-    draw_claude_output(frame, app, chunks[1], is_narrow);
-}
-
 fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
-    let titles: Vec<Line> = app
+    let welcome_showing = app.show_welcome || app.session_manager.sessions.is_empty();
+
+    let mut titles: Vec<Line> = app
         .session_manager
         .sessions
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let style = if i == app.session_manager.active_index {
+            let style = if !welcome_showing && i == app.session_manager.active_index {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
@@ -169,6 +165,23 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
             Line::from(Span::styled(&s.name, style))
         })
         .collect();
+
+    // Add the welcome tab
+    if welcome_showing {
+        titles.push(Line::from(Span::styled(
+            "aide",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    // Selected index: welcome tab is at the end
+    let selected = if welcome_showing {
+        titles.len() - 1
+    } else {
+        app.session_manager.active_index
+    };
 
     let border_color = if is_focused {
         FOCUSED_BORDER
@@ -188,7 +201,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
 
     let tabs = Tabs::new(titles)
         .block(block)
-        .select(app.session_manager.active_index)
+        .select(selected)
         .divider(Span::styled(divider, Style::default().fg(Color::DarkGray)))
         .highlight_style(
             Style::default()
@@ -574,6 +587,8 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
         ""
     } else if at_top {
         " ↓ more "
+    } else if at_bottom && app.git_log_has_more {
+        " loading... "
     } else if at_bottom {
         " ── end ── "
     } else {

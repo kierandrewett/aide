@@ -135,25 +135,53 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             match action {
                 Action::Exit => app.should_quit = true,
                 Action::NextTab => {
-                    app.session_manager.next_tab();
+                    if app.show_welcome && !app.session_manager.sessions.is_empty() {
+                        // From welcome tab, go to first session
+                        app.show_welcome = false;
+                        app.session_manager.active_index = 0;
+                    } else if !app.show_welcome {
+                        let next = app.session_manager.active_index + 1;
+                        if next >= app.session_manager.sessions.len() {
+                            // Wrap around: no welcome tab to go to, go to 0
+                            app.session_manager.active_index = 0;
+                        } else {
+                            app.session_manager.active_index = next;
+                        }
+                    }
                     app.scroll_offset = 0;
                     app.follow_mode = true;
+                    app.git_log_limit = 100;
+                    app.git_log_scroll = 0;
+                    app.git_status_scroll = 0;
                     app.refresh_data();
-                    last_resize = (0, 0); // force resize for new session
+                    last_resize = (0, 0);
                 }
                 Action::PrevTab => {
-                    app.session_manager.prev_tab();
+                    if app.show_welcome && !app.session_manager.sessions.is_empty() {
+                        // From welcome tab, go to last session
+                        app.show_welcome = false;
+                        app.session_manager.active_index =
+                            app.session_manager.sessions.len().saturating_sub(1);
+                    } else if !app.show_welcome {
+                        if app.session_manager.active_index == 0 {
+                            // Wrap: go to last session
+                            app.session_manager.active_index =
+                                app.session_manager.sessions.len().saturating_sub(1);
+                        } else {
+                            app.session_manager.active_index -= 1;
+                        }
+                    }
                     app.scroll_offset = 0;
                     app.follow_mode = true;
+                    app.git_log_limit = 100;
+                    app.git_log_scroll = 0;
+                    app.git_status_scroll = 0;
                     app.refresh_data();
                     last_resize = (0, 0);
                 }
                 Action::NewInstance => {
-                    // Only open picker if sessions already exist;
-                    // otherwise splash screen is already showing
-                    if !app.session_manager.sessions.is_empty() {
-                        app.open_picker();
-                    }
+                    // Show the welcome/splash tab
+                    app.show_welcome = true;
                 }
                 Action::ProjectPicker => app.open_picker(),
                 Action::CloseInstance => {
@@ -234,6 +262,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     if app.focus == app::FocusPanel::GitPanel {
                         app.git_status_scroll = app.git_status_scroll.saturating_add(3);
                         app.git_log_scroll = app.git_log_scroll.saturating_add(3);
+
+                        // Lazy load: fetch more log when near bottom
+                        let log_lines = app.git_log.lines().count() as u16;
+                        if app.git_log_has_more && app.git_log_scroll + 20 >= log_lines {
+                            app.git_log_limit += 200;
+                            refresh_git_log(&mut app);
+                        }
                     } else {
                         app.follow_mode = false;
                         app.scroll_offset = app.scroll_offset.saturating_add(3);
@@ -287,7 +322,9 @@ fn refresh_git_log(app: &mut App) {
     if let Some(session) = app.session_manager.active_session() {
         let dir = session.directory.clone();
         if !dir.is_empty() {
-            if let Ok(log) = git::log_oneline(&dir) {
+            if let Ok(log) = git::log_oneline(&dir, app.git_log_limit) {
+                let line_count = log.lines().count();
+                app.git_log_has_more = line_count >= app.git_log_limit;
                 app.git_log = log;
             }
         }

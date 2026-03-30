@@ -77,21 +77,6 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn next_tab(&mut self) {
-        if !self.sessions.is_empty() {
-            self.active_index = (self.active_index + 1) % self.sessions.len();
-        }
-    }
-
-    pub fn prev_tab(&mut self) {
-        if !self.sessions.is_empty() {
-            self.active_index = if self.active_index == 0 {
-                self.sessions.len() - 1
-            } else {
-                self.active_index - 1
-            };
-        }
-    }
 
     pub fn active_session(&self) -> Option<&Session> {
         self.sessions.get(self.active_index)
