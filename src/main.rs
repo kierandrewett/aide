@@ -58,7 +58,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
     let git_status_interval = Duration::from_secs(2);
     let git_log_interval = Duration::from_secs(3);
-    let output_interval = Duration::from_millis(100);
+    let output_interval = Duration::from_millis(50);
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;

@@ -18,7 +18,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
-    let tab_height: u16 = if is_narrow { 1 } else { 3 };
+    let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -98,30 +98,37 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(Color::DarkGray)
             };
             Line::from(Span::styled(&s.name, style))
         })
         .collect();
 
+    let border_color = if is_focused {
+        FOCUSED_BORDER
+    } else {
+        UNFOCUSED_BORDER
+    };
+
     let block = if is_narrow {
+        // Minimal: no side/top borders, just a bottom line separator
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(if is_focused {
-                FOCUSED_BORDER
-            } else {
-                UNFOCUSED_BORDER
-            }))
+            .border_style(Style::default().fg(border_color))
     } else {
         focused_block(" Sessions ", is_focused)
     };
 
+    let divider = if is_narrow { " │ " } else { " | " };
+
     let tabs = Tabs::new(titles)
         .block(block)
         .select(app.session_manager.active_index)
+        .divider(Span::styled(divider, Style::default().fg(Color::DarkGray)))
         .highlight_style(
             Style::default()
                 .fg(Color::Yellow)
+                .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         );
 
