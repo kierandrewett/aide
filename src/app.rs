@@ -39,6 +39,9 @@ pub struct App {
     pub git_status_scroll: u16,
     pub git_log_scroll: u16,
     pub git_remote_branch: String,
+    pub git_log_limit: usize,
+    pub git_log_has_more: bool,
+    pub show_welcome: bool,
 }
 
 impl App {
@@ -71,6 +74,9 @@ impl App {
             git_status_scroll: 0,
             git_log_scroll: 0,
             git_remote_branch: String::new(),
+            git_log_limit: 100,
+            git_log_has_more: true,
+            show_welcome: true,
         }
     }
 
@@ -95,7 +101,10 @@ impl App {
                 if let Ok(status) = git::status_short(&dir) {
                     self.git_status = status;
                 }
-                if let Ok(log) = git::log_oneline(&dir) {
+                if let Ok(log) = git::log_oneline(&dir, self.git_log_limit) {
+                    // If we got fewer lines than limit, there's no more history
+                    let line_count = log.lines().count();
+                    self.git_log_has_more = line_count >= self.git_log_limit;
                     self.git_log = log;
                 }
                 if let Ok(branch) = git::current_branch(&dir) {

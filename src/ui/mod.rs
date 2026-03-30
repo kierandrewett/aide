@@ -20,20 +20,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
-    // Show splash screen if no sessions
-    if app.session_manager.sessions.is_empty() {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(status_height)])
-            .split(size);
-        draw_splash(frame, app, chunks[0]);
-        draw_status_bar(frame, app, chunks[1]);
-        if app.show_picker {
-            draw_picker(frame, app, size);
-        }
-        return;
-    }
-
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(status_height)])
@@ -42,18 +28,36 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let content_area = main_chunks[0];
     let status_area = main_chunks[1];
 
+    // Always show tab bar + content; welcome is just the content of a special tab
+    let tab_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
+        .split(content_area);
+
+    draw_tabs(frame, app, tab_chunks[0], is_narrow);
+    let body_area = tab_chunks[1];
+
+    if app.show_welcome || app.session_manager.sessions.is_empty() {
+        draw_splash(frame, app, body_area);
+        draw_status_bar(frame, app, status_area);
+        if app.show_picker {
+            draw_picker(frame, app, size);
+        }
+        return;
+    }
+
     if app.show_right_panel && is_narrow {
-        draw_right_panel(frame, app, content_area, is_narrow);
+        draw_right_panel(frame, app, body_area, is_narrow);
     } else if app.show_right_panel {
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(content_area);
+            .split(body_area);
 
-        draw_left_panel(frame, app, h_chunks[0], tab_height, is_narrow);
+        draw_claude_output(frame, app, h_chunks[0], is_narrow);
         draw_right_panel(frame, app, h_chunks[1], is_narrow);
     } else {
-        draw_left_panel(frame, app, content_area, tab_height, is_narrow);
+        draw_claude_output(frame, app, body_area, is_narrow);
     }
 
     draw_status_bar(frame, app, status_area);
@@ -86,33 +90,52 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
 }
 
 fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
-    let logo = vec![
-        "",
-        "        ██████╗ ██╗██████╗ ███████╗",
-        "       ██╔══██╗██║██╔══██╗██╔════╝",
-        "       ███████║██║██║  ██║█████╗  ",
-        "       ██╔══██║██║██║  ██║██╔══╝  ",
-        "       ██║  ██║██║██████╔╝███████╗",
-        "       ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝",
-        "",
-    ];
-
     let typing_indicator = if app.is_typing() { " ●" } else { "" };
+
+    // Big logo needs ~40 cols wide and ~14 rows tall (logo + subtitle + hints + padding)
+    let use_big_logo = area.width >= 45 && area.height >= 14;
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Center vertically
-    let logo_height = logo.len() + 6; // logo + subtitle + spacer + hints
-    let v_pad = (area.height as usize).saturating_sub(logo_height) / 2;
-    for _ in 0..v_pad {
-        lines.push(Line::from(""));
-    }
+    if use_big_logo {
+        let logo = vec![
+            "",
+            "        ██████╗ ██╗██████╗ ███████╗",
+            "       ██╔══██╗██║██╔══██╗██╔════╝",
+            "       ███████║██║██║  ██║█████╗  ",
+            "       ██╔══██║██║██║  ██║██╔══╝  ",
+            "       ██║  ██║██║██████╔╝███████╗",
+            "       ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝",
+            "",
+        ];
 
-    for l in &logo {
+        let content_height = logo.len() + 4; // logo + subtitle + blank + hints + blank
+        let v_pad = (area.height as usize).saturating_sub(content_height) / 2;
+        for _ in 0..v_pad {
+            lines.push(Line::from(""));
+        }
+
+        for l in &logo {
+            lines.push(Line::from(Span::styled(
+                *l,
+                Style::default().fg(Color::Cyan),
+            )));
+        }
+    } else {
+        // Compact: just the name, centered vertically
+        let content_height: usize = 5; // title + blank + subtitle + blank + hints
+        let v_pad = (area.height as usize).saturating_sub(content_height) / 2;
+        for _ in 0..v_pad {
+            lines.push(Line::from(""));
+        }
+
         lines.push(Line::from(Span::styled(
-            *l,
-            Style::default().fg(Color::Cyan),
+            "  ── aide ──",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )));
+        lines.push(Line::from(""));
     }
 
     lines.push(Line::from(Span::styled(
@@ -122,19 +145,12 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled(
-            "  Ctrl+T ",
+            "  Ctrl+P ",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("new session   ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "Ctrl+P ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("pick project   ", Style::default().fg(Color::DarkGray)),
+        Span::styled("select project   ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "Ctrl+X ",
             Style::default()
@@ -148,34 +164,49 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect, tab_height: u16, is_narrow: bool) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
-        .split(area);
-
-    draw_tabs(frame, app, chunks[0], is_narrow);
-    draw_claude_output(frame, app, chunks[1], is_narrow);
-}
-
 fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
-    let titles: Vec<Line> = app
+    let welcome_showing = app.show_welcome || app.session_manager.sessions.is_empty();
+
+    let mut titles: Vec<Line> = app
         .session_manager
         .sessions
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let style = if i == app.session_manager.active_index {
+            let is_active = !welcome_showing && i == app.session_manager.active_index;
+            let style = if is_active {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            Line::from(Span::styled(&s.name, style))
+            let label = if s.has_notification && !is_active {
+                format!("🔔 {}", s.name)
+            } else {
+                s.name.clone()
+            };
+            Line::from(Span::styled(label, style))
         })
         .collect();
+
+    // Add the welcome tab
+    if welcome_showing {
+        titles.push(Line::from(Span::styled(
+            "aide",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    // Selected index: welcome tab is at the end
+    let selected = if welcome_showing {
+        titles.len() - 1
+    } else {
+        app.session_manager.active_index
+    };
 
     let border_color = if is_focused {
         FOCUSED_BORDER
@@ -195,7 +226,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
 
     let tabs = Tabs::new(titles)
         .block(block)
-        .select(app.session_manager.active_index)
+        .select(selected)
         .divider(Span::styled(divider, Style::default().fg(Color::DarkGray)))
         .highlight_style(
             Style::default()
@@ -388,7 +419,19 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
     let max_scroll = total.saturating_sub(visible);
     app.git_status_scroll = app.git_status_scroll.min(max_scroll);
 
-    let block = git_panel_block(" 📋 Status ", is_focused, is_narrow);
+    let at_top = app.git_status_scroll == 0;
+    let at_bottom = app.git_status_scroll >= max_scroll;
+    let scroll_hint = if max_scroll == 0 {
+        ""
+    } else if at_top {
+        " ↓ more "
+    } else if at_bottom {
+        " ↑ more "
+    } else {
+        " ↑↓ "
+    };
+    let title = format!(" 📋 Status{}", scroll_hint);
+    let block = git_panel_block(&title, is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -563,7 +606,21 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let max_scroll = total.saturating_sub(visible);
     app.git_log_scroll = app.git_log_scroll.min(max_scroll);
 
-    let block = git_panel_block(" 📜 Log ", is_focused, is_narrow);
+    let at_top = app.git_log_scroll == 0;
+    let at_bottom = app.git_log_scroll >= max_scroll;
+    let scroll_hint = if max_scroll == 0 {
+        ""
+    } else if at_top {
+        " ↓ more "
+    } else if at_bottom && app.git_log_has_more {
+        " loading... "
+    } else if at_bottom {
+        " ── end ── "
+    } else {
+        " ↑↓ "
+    };
+    let title = format!(" 📜 Log{}", scroll_hint);
+    let block = git_panel_block(&title, is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
         .block(block)

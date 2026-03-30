@@ -12,7 +12,7 @@ pub fn status_short(directory: &str) -> Result<String> {
 }
 
 /// Get git log with hash, decoration, relative date, author, message.
-pub fn log_oneline(directory: &str) -> Result<String> {
+pub fn log_oneline(directory: &str, limit: usize) -> Result<String> {
     let output = Command::new("git")
         .args([
             "log",
@@ -20,7 +20,7 @@ pub fn log_oneline(directory: &str) -> Result<String> {
             "--graph",
             "--decorate=short",
             "--format=%h %d %s (%cr)",
-            "-30",
+            &format!("-{}", limit),
         ])
         .current_dir(directory)
         .output()
