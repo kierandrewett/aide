@@ -639,46 +639,56 @@ fn tilde_path(path: &str) -> String {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
-        (tilde_path(&s.directory), s.name.as_str())
-    } else {
-        ("~".to_string(), "aide")
-    };
-
-    let branch = if app.git_branch.is_empty() {
-        "—".to_string()
-    } else {
-        app.git_branch.clone()
-    };
-
-    // Always show upstream counts with aligned arrows
-    let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
-    let upstream_text = format!("↓{} ↑{}", behind, ahead);
-
-    // Diff stats: +added -deleted
-    let diff_text = match app.git_diff_stats {
-        Some((added, deleted)) => format!("+{} -{}", added, deleted),
-        None => "+0 -0".to_string(),
-    };
-
-    let typing_indicator = if app.is_typing() { " ●" } else { "" };
+    let on_splash = app.show_welcome || app.session_manager.sessions.is_empty();
 
     let w = area.width as usize;
     let is_narrow = area.height >= 2;
 
-    let left_text = format!(" {}{} ", directory, typing_indicator);
-    let git_text = format!(
-        " {} {} {} {} ",
-        branch, upstream_text, diff_text, session_name
-    );
-
-    // Keybinds with Tab/Shift+Tab
-    let hints = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
-        "^G back  ↑↓ scroll  ^X exit "
-    } else if app.session_manager.sessions.is_empty() {
-        "^T new  ^P pick  ^X exit "
+    let (left_text, git_text, hints): (String, String, &str) = if on_splash {
+        let left = " aide ".to_string();
+        let git = String::new();
+        let h = if app.session_manager.sessions.is_empty() {
+            "^P pick  ^X exit "
+        } else {
+            "Tab/S-Tab switch  ^P pick  ^W close  ^X exit "
+        };
+        (left, git, h)
     } else {
-        "Tab/S-Tab switch  ^T new  ^W close  ^G git  ^X exit "
+        let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
+            (tilde_path(&s.directory), s.name.as_str())
+        } else {
+            ("~".to_string(), "aide")
+        };
+
+        let branch = if app.git_branch.is_empty() {
+            "—".to_string()
+        } else {
+            app.git_branch.clone()
+        };
+
+        let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
+        let upstream_text = format!("↓{} ↑{}", behind, ahead);
+
+        let diff_text = match app.git_diff_stats {
+            Some((added, deleted)) => format!("+{} -{}", added, deleted),
+            None => "+0 -0".to_string(),
+        };
+
+        let typing_indicator = if app.is_typing() { " ●" } else { "" };
+
+        let left = format!(" {}{} ", directory, typing_indicator);
+        let git = format!(
+            " {} {} {} {} ",
+            branch, upstream_text, diff_text, session_name
+        );
+
+        let h = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
+            "^G back  ↑↓ scroll  ^X exit "
+        } else {
+            "Tab/S-Tab switch  ^T new  ^W close  ^G git  ^X exit "
+        };
+
+        (left, git, h)
     };
 
     let left_w = left_text.width();
