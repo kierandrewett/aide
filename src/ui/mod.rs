@@ -18,6 +18,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
+    let tab_height: u16 = if is_narrow { 1 } else { 3 };
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -30,7 +31,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.show_right_panel && is_narrow {
         // Narrow: git panel fullscreen
         app.focus = FocusPanel::GitPanel;
-        draw_right_panel(frame, app, content_area);
+        draw_right_panel(frame, app, content_area, is_narrow);
     } else if app.show_right_panel {
         // Wide: side-by-side
         let h_chunks = Layout::default()
@@ -38,11 +39,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(content_area);
 
-        draw_left_panel(frame, app, h_chunks[0]);
-        draw_right_panel(frame, app, h_chunks[1]);
+        draw_left_panel(frame, app, h_chunks[0], tab_height, is_narrow);
+        draw_right_panel(frame, app, h_chunks[1], is_narrow);
     } else {
         app.focus = FocusPanel::Output;
-        draw_left_panel(frame, app, content_area);
+        draw_left_panel(frame, app, content_area, tab_height, is_narrow);
     }
 
     draw_status_bar(frame, app, status_area);
@@ -74,17 +75,17 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
         .title(Span::styled(title, title_style))
 }
 
-fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect) {
+fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect, tab_height: u16, is_narrow: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
         .split(area);
 
-    draw_tabs(frame, app, chunks[0]);
-    draw_claude_output(frame, app, chunks[1]);
+    draw_tabs(frame, app, chunks[0], is_narrow);
+    draw_claude_output(frame, app, chunks[1], is_narrow);
 }
 
-fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
     let titles: Vec<Line> = app
         .session_manager
@@ -103,8 +104,20 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let block = if is_narrow {
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(if is_focused {
+                FOCUSED_BORDER
+            } else {
+                UNFOCUSED_BORDER
+            }))
+    } else {
+        focused_block(" Sessions ", is_focused)
+    };
+
     let tabs = Tabs::new(titles)
-        .block(focused_block(" Sessions ", is_focused))
+        .block(block)
         .select(app.session_manager.active_index)
         .highlight_style(
             Style::default()
@@ -115,12 +128,15 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(tabs, area);
 }
 
-fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect) {
+fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
 
     // Track viewport size for tmux resize
-    let inner_width = area.width.saturating_sub(2);
-    let inner_height = area.height.saturating_sub(2);
+    // On narrow screens we skip side borders, so only top border (from tabs separator) exists
+    let border_h: u16 = if is_narrow { 0 } else { 2 };
+    let border_w: u16 = if is_narrow { 0 } else { 2 };
+    let inner_width = area.width.saturating_sub(border_w);
+    let inner_height = area.height.saturating_sub(border_h);
     app.output_width = inner_width;
     app.output_height = inner_height;
 
@@ -155,24 +171,28 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect) {
         " Output "
     };
 
-    let paragraph = Paragraph::new(text)
-        .block(focused_block(title, is_focused))
-        .scroll((top_offset, 0));
+    let block = if is_narrow {
+        Block::default()
+    } else {
+        focused_block(title, is_focused)
+    };
+
+    let paragraph = Paragraph::new(text).block(block).scroll((top_offset, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn draw_right_panel(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_right_panel(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    draw_git_status(frame, app, chunks[0]);
-    draw_git_log(frame, app, chunks[1]);
+    draw_git_status(frame, app, chunks[0], is_narrow);
+    draw_git_log(frame, app, chunks[1], is_narrow);
 }
 
-fn draw_git_status(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_git_status(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::GitPanel;
     let lines: Vec<Line> = app
         .git_status
@@ -195,20 +215,41 @@ fn draw_git_status(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let border_overhead: u16 = if is_narrow { 1 } else { 2 };
     let total = lines.len() as u16;
-    let visible = area.height.saturating_sub(2);
+    let visible = area.height.saturating_sub(border_overhead);
     let max_scroll = total.saturating_sub(visible);
     let scroll = app.git_scroll_offset.min(max_scroll);
 
+    let block = if is_narrow {
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(if is_focused {
+                FOCUSED_BORDER
+            } else {
+                UNFOCUSED_BORDER
+            }))
+            .title(Span::styled(
+                " Git Status ",
+                Style::default().fg(if is_focused {
+                    FOCUSED_BORDER
+                } else {
+                    UNFOCUSED_BORDER
+                }),
+            ))
+    } else {
+        focused_block(" Git Status ", is_focused)
+    };
+
     let paragraph = Paragraph::new(lines)
-        .block(focused_block(" Git Status ", is_focused))
+        .block(block)
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_git_log(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::GitPanel;
     let lines: Vec<Line> = app
         .git_log
@@ -223,8 +264,28 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    let block = if is_narrow {
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(if is_focused {
+                FOCUSED_BORDER
+            } else {
+                UNFOCUSED_BORDER
+            }))
+            .title(Span::styled(
+                " Git Log ",
+                Style::default().fg(if is_focused {
+                    FOCUSED_BORDER
+                } else {
+                    UNFOCUSED_BORDER
+                }),
+            ))
+    } else {
+        focused_block(" Git Log ", is_focused)
+    };
+
     let paragraph = Paragraph::new(lines)
-        .block(focused_block(" Git Log ", is_focused))
+        .block(block)
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
@@ -397,6 +458,21 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
     let y = (area.height.saturating_sub(dialog_height)) / 2;
     let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
 
+    // Clear the entire area behind the dialog with a solid background
+    let clear_lines: Vec<Line> = (0..dialog_height)
+        .map(|_| {
+            Line::from(Span::styled(
+                " ".repeat(dialog_width as usize),
+                Style::default().bg(Color::Black),
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(clear_lines).style(Style::default().bg(Color::Black)),
+        dialog_area,
+    );
+
+    let inner_height = dialog_height.saturating_sub(2) as usize; // account for border
     let mut lines = vec![
         Line::from(Span::styled(
             format!(" Filter: {}_ ", app.picker_filter),
@@ -405,13 +481,27 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
     ];
 
-    for (i, project) in app.filtered_projects().iter().enumerate() {
+    let filtered = app.filtered_projects();
+    let visible_slots = inner_height.saturating_sub(2); // subtract filter line + blank line
+    let scroll_start = if app.picker_selected >= visible_slots {
+        app.picker_selected - visible_slots + 1
+    } else {
+        0
+    };
+
+    for (i, project) in filtered
+        .iter()
+        .enumerate()
+        .skip(scroll_start)
+        .take(visible_slots)
+    {
         let style = if i == app.picker_selected {
             Style::default()
                 .fg(Color::Yellow)
+                .bg(Color::Black)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::White).bg(Color::Black)
         };
         let prefix = if i == app.picker_selected {
             " ▸ "
@@ -437,7 +527,5 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
             .style(Style::default().bg(Color::Black).fg(Color::White)),
     );
 
-    let clear = Paragraph::new("").style(Style::default().bg(Color::Black));
-    frame.render_widget(clear, dialog_area);
     frame.render_widget(paragraph, dialog_area);
 }
