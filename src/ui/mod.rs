@@ -2,7 +2,7 @@ use ansi_to_tui::IntoText;
 use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
@@ -20,6 +20,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = if is_narrow { 2 } else { 3 };
 
+    // Show splash screen if no sessions
+    if app.session_manager.sessions.is_empty() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(status_height)])
+            .split(size);
+        draw_splash(frame, app, chunks[0]);
+        draw_status_bar(frame, app, chunks[1]);
+        if app.show_picker {
+            draw_picker(frame, app, size);
+        }
+        return;
+    }
+
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(status_height)])
@@ -29,11 +43,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_area = main_chunks[1];
 
     if app.show_right_panel && is_narrow {
-        // Narrow: git panel fullscreen
         app.focus = FocusPanel::GitPanel;
         draw_right_panel(frame, app, content_area, is_narrow);
     } else if app.show_right_panel {
-        // Wide: side-by-side
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
@@ -75,6 +87,69 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
         .title(Span::styled(title, title_style))
 }
 
+fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
+    let logo = vec![
+        "",
+        "        ██████╗ ██╗██████╗ ███████╗",
+        "       ██╔══██╗██║██╔══██╗██╔════╝",
+        "       ███████║██║██║  ██║█████╗  ",
+        "       ██╔══██║██║██║  ██║██╔══╝  ",
+        "       ██║  ██║██║██████╔╝███████╗",
+        "       ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝",
+        "",
+    ];
+
+    let typing_indicator = if app.is_typing() { " ●" } else { "" };
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Center vertically
+    let logo_height = logo.len() + 6; // logo + subtitle + spacer + hints
+    let v_pad = (area.height as usize).saturating_sub(logo_height) / 2;
+    for _ in 0..v_pad {
+        lines.push(Line::from(""));
+    }
+
+    for l in &logo {
+        lines.push(Line::from(Span::styled(
+            *l,
+            Style::default().fg(Color::Cyan),
+        )));
+    }
+
+    lines.push(Line::from(Span::styled(
+        format!("  Terminal IDE for Claude Code{}", typing_indicator),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Ctrl+T ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("new session   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "Ctrl+P ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("pick project   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "Ctrl+X ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("quit", Style::default().fg(Color::DarkGray)),
+    ]));
+
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
+    frame.render_widget(paragraph, area);
+}
+
 fn draw_left_panel(frame: &mut Frame, app: &mut App, area: Rect, tab_height: u16, is_narrow: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -95,7 +170,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .map(|(i, s)| {
             let style = if i == app.session_manager.active_index {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
@@ -111,7 +186,6 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     };
 
     let block = if is_narrow {
-        // Minimal: no side/top borders, just a bottom line separator
         Block::default()
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(border_color))
@@ -127,8 +201,8 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         .divider(Span::styled(divider, Style::default().fg(Color::DarkGray)))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::DarkGray)
+                .fg(Color::White)
+                .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -138,8 +212,6 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
 fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::Output;
 
-    // Track viewport size for tmux resize
-    // On narrow screens we skip side borders, so only top border (from tabs separator) exists
     let border_h: u16 = if is_narrow { 0 } else { 2 };
     let border_w: u16 = if is_narrow { 0 } else { 2 };
     let inner_width = area.width.saturating_sub(border_w);
@@ -157,13 +229,10 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     let total_lines = text.lines.len() as u16;
     let max_scroll_back = total_lines.saturating_sub(inner_height);
 
-    // Clamp scroll_offset to valid range
     if app.scroll_offset > max_scroll_back {
         app.scroll_offset = max_scroll_back;
     }
 
-    // scroll_offset = lines scrolled back from bottom
-    // Convert to top-offset for Paragraph::scroll()
     let top_offset = if app.follow_mode {
         max_scroll_back
     } else {
@@ -298,37 +367,20 @@ fn draw_git_log(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
     frame.render_widget(paragraph, area);
 }
 
-fn shorten_path(path: &str) -> String {
+fn tilde_path(path: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    let path = if !home.is_empty() && path.starts_with(&home) {
+    if !home.is_empty() && path.starts_with(&home) {
         format!("~{}", &path[home.len()..])
     } else {
         path.to_string()
-    };
-
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() <= 2 {
-        return path;
     }
-    let last = parts.last().unwrap();
-    let shortened: Vec<String> = parts[..parts.len() - 1]
-        .iter()
-        .map(|p| {
-            if p.is_empty() || *p == "~" {
-                p.to_string()
-            } else {
-                p.chars().next().unwrap().to_string()
-            }
-        })
-        .collect();
-    format!("{}/{}", shortened.join("/"), last)
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let (directory, session_name) = if let Some(s) = app.session_manager.active_session() {
-        (shorten_path(&s.directory), s.name.as_str())
+        (tilde_path(&s.directory), s.name.as_str())
     } else {
-        ("~".to_string(), "no session")
+        ("~".to_string(), "aide")
     };
 
     let branch = if app.git_branch.is_empty() {
@@ -337,22 +389,14 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         app.git_branch.clone()
     };
 
-    let upstream = match app.git_upstream {
-        Some((behind, ahead)) => {
-            let mut parts = Vec::new();
-            if behind > 0 {
-                parts.push(format!("⇣{}", behind));
-            }
-            if ahead > 0 {
-                parts.push(format!("⇡{}", ahead));
-            }
-            if parts.is_empty() {
-                "✓".to_string()
-            } else {
-                parts.join(" ")
-            }
-        }
-        None => String::new(),
+    // Always show upstream counts with aligned arrows
+    let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
+    let upstream_text = format!("↓{} ↑{}", behind, ahead);
+
+    // Diff stats: +added -deleted
+    let diff_text = match app.git_diff_stats {
+        Some((added, deleted)) => format!("+{} -{}", added, deleted),
+        None => "+0 -0".to_string(),
     };
 
     let typing_indicator = if app.is_typing() { " ●" } else { "" };
@@ -360,14 +404,19 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let w = area.width as usize;
     let is_narrow = area.height >= 2;
 
-    let left_text = format!(" {} {}{} ", directory, session_name, typing_indicator);
-    let git_text = format!(" {} {} ", branch, upstream);
+    let left_text = format!(" {}{} ", directory, typing_indicator);
+    let git_text = format!(
+        " {} {} {} {} ",
+        branch, upstream_text, diff_text, session_name
+    );
 
-    // Contextual hints based on focused panel
+    // Keybinds with Tab/Shift+Tab
     let hints = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
-        "^G back  Scroll ↑↓  ^X exit "
+        "^G back  ↑↓ scroll  ^X exit "
+    } else if app.session_manager.sessions.is_empty() {
+        "^T new  ^P pick  ^X exit "
     } else {
-        "^T new ^W close ^G git ^X exit "
+        "Tab/S-Tab switch  ^T new  ^G git  ^X exit "
     };
 
     let left_w = left_text.width();
@@ -479,7 +528,7 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
         dialog_area,
     );
 
-    let inner_height = dialog_height.saturating_sub(2) as usize; // account for border
+    let inner_height = dialog_height.saturating_sub(2) as usize;
     let mut lines = vec![
         Line::from(Span::styled(
             format!(" Filter: {}_ ", app.picker_filter),
@@ -489,7 +538,7 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     let filtered = app.filtered_projects();
-    let visible_slots = inner_height.saturating_sub(2); // subtract filter line + blank line
+    let visible_slots = inner_height.saturating_sub(2);
     let scroll_start = if app.picker_selected >= visible_slots {
         app.picker_selected - visible_slots + 1
     } else {
@@ -504,8 +553,8 @@ fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
     {
         let style = if i == app.picker_selected {
             Style::default()
-                .fg(Color::Yellow)
-                .bg(Color::Black)
+                .fg(Color::White)
+                .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White).bg(Color::Black)

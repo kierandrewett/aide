@@ -22,6 +22,7 @@ pub struct App {
     pub git_log: String,
     pub git_branch: String,
     pub git_upstream: Option<(usize, usize)>,
+    pub git_diff_stats: Option<(usize, usize)>,
     pub scroll_offset: u16,
     pub follow_mode: bool,
     pub should_quit: bool,
@@ -51,6 +52,7 @@ impl App {
             git_log: String::new(),
             git_branch: String::new(),
             git_upstream: None,
+            git_diff_stats: None,
             scroll_offset: 0,
             follow_mode: true,
             should_quit: false,
@@ -96,15 +98,15 @@ impl App {
                     self.git_branch = branch;
                 }
                 self.git_upstream = git::upstream_counts(&dir);
+                self.git_diff_stats = git::diff_stats(&dir);
             }
         } else {
-            self.claude_output =
-                "No active session. Press Ctrl+T to create one or Ctrl+P to pick a project."
-                    .to_string();
+            self.claude_output.clear();
             self.git_status.clear();
             self.git_log.clear();
             self.git_branch.clear();
             self.git_upstream = None;
+            self.git_diff_stats = None;
         }
     }
 

@@ -31,6 +31,46 @@ pub fn current_branch(directory: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Get working tree diff stats (additions, deletions).
+pub fn diff_stats(directory: &str) -> Option<(usize, usize)> {
+    let output = Command::new("git")
+        .args(["diff", "--numstat"])
+        .current_dir(directory)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut added = 0usize;
+    let mut deleted = 0usize;
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            added += parts[0].parse::<usize>().unwrap_or(0);
+            deleted += parts[1].parse::<usize>().unwrap_or(0);
+        }
+    }
+    // Also include staged changes
+    let staged = Command::new("git")
+        .args(["diff", "--numstat", "--cached"])
+        .current_dir(directory)
+        .output()
+        .ok()?;
+    let staged_text = String::from_utf8_lossy(&staged.stdout);
+    for line in staged_text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            added += parts[0].parse::<usize>().unwrap_or(0);
+            deleted += parts[1].parse::<usize>().unwrap_or(0);
+        }
+    }
+
+    Some((added, deleted))
+}
+
 /// Get push/pull counts relative to upstream.
 /// Returns (behind, ahead) or None if no upstream.
 pub fn upstream_counts(directory: &str) -> Option<(usize, usize)> {

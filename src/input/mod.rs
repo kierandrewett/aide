@@ -23,6 +23,7 @@ pub enum Action {
     ForwardChars(String),
     ForwardSpecial(String),
     ForwardCtrl(char),
+    EscapeKey,
     None,
 }
 
@@ -162,7 +163,7 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         (KeyCode::Char(c), _) => Action::ForwardChars(c.to_string()),
         (KeyCode::Enter, _) => Action::ForwardSpecial("Enter".into()),
         (KeyCode::Backspace, _) => Action::ForwardSpecial("BSpace".into()),
-        (KeyCode::Esc, _) => Action::ForwardSpecial("Escape".into()),
+        (KeyCode::Esc, _) => Action::EscapeKey,
         (KeyCode::Up, _) => Action::ForwardSpecial("Up".into()),
         (KeyCode::Down, _) => Action::ForwardSpecial("Down".into()),
         (KeyCode::Left, _) => Action::ForwardSpecial("Left".into()),

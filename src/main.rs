@@ -185,6 +185,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.follow_mode = true;
                     }
                 }
+                Action::EscapeKey => {
+                    // If git panel is fullscreen (narrow + showing), close it
+                    let size = terminal.size().unwrap_or_default();
+                    if app.show_right_panel && size.width < 100 {
+                        app.show_right_panel = false;
+                        last_resize = (0, 0);
+                    } else if let Some(session) = app.session_manager.active_session() {
+                        let name = session.name.clone();
+                        let _ = tmux::send_special_key(&name, "Escape");
+                        did_forward = true;
+                        app.last_input_time = Some(Instant::now());
+                    }
+                }
                 Action::ScrollUp => {
                     if app.focus == app::FocusPanel::GitPanel {
                         app.git_scroll_offset = app.git_scroll_offset.saturating_sub(3);
@@ -241,6 +254,7 @@ fn refresh_git_status(app: &mut App) {
                 app.git_branch = branch;
             }
             app.git_upstream = git::upstream_counts(&dir);
+            app.git_diff_stats = git::diff_stats(&dir);
         }
     }
 }
