@@ -159,7 +159,6 @@ impl App {
         let filtered = self.filtered_projects();
         if let Some(project) = filtered.get(self.picker_selected).cloned() {
             self.close_picker();
-            self.show_welcome = false;
             self.create_session_for_project(&project)?;
         }
         Ok(())

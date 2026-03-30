@@ -77,7 +77,6 @@ impl SessionManager {
         Ok(())
     }
 
-
     pub fn active_session(&self) -> Option<&Session> {
         self.sessions.get(self.active_index)
     }

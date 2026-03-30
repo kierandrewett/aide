@@ -185,9 +185,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::ProjectPicker => app.open_picker(),
                 Action::CloseInstance => {
-                    if !app.session_manager.sessions.is_empty() {
+                    if app.show_welcome && !app.session_manager.sessions.is_empty() {
+                        // Close welcome tab without confirmation, switch to session
+                        app.show_welcome = false;
+                    } else if !app.show_welcome && !app.session_manager.sessions.is_empty() {
                         app.show_close_confirm = true;
                     }
+                    // If welcome + no sessions, nothing to close
                 }
                 Action::TogglePanel => {
                     if app.show_right_panel && app.focus == app::FocusPanel::GitPanel {
