@@ -42,6 +42,7 @@ pub struct App {
     pub git_log_limit: usize,
     pub git_log_has_more: bool,
     pub show_welcome: bool,
+    pub tab_scroll_offset: usize,
 }
 
 impl App {
@@ -77,6 +78,7 @@ impl App {
             git_log_limit: 100,
             git_log_has_more: true,
             show_welcome: true,
+            tab_scroll_offset: 0,
         }
     }
 

@@ -45,6 +45,7 @@ impl SessionManager {
                 });
             }
         }
+        self.restore_tab_order();
         Ok(())
     }
 
@@ -66,6 +67,7 @@ impl SessionManager {
         });
 
         self.active_index = self.sessions.len() - 1;
+        self.save_tab_order();
         Ok(self.sessions.last().unwrap())
     }
 
@@ -80,11 +82,39 @@ impl SessionManager {
         if self.active_index >= self.sessions.len() && !self.sessions.is_empty() {
             self.active_index = self.sessions.len() - 1;
         }
+        self.save_tab_order();
         Ok(())
     }
 
     pub fn active_session(&self) -> Option<&Session> {
         self.sessions.get(self.active_index)
+    }
+
+    /// Save current tab order to /tmp so it persists across aide restarts.
+    pub fn save_tab_order(&self) {
+        let names: Vec<&str> = self.sessions.iter().map(|s| s.name.as_str()).collect();
+        let _ = std::fs::write(TAB_ORDER_FILE, names.join("\n"));
+    }
+
+    /// Reorder sessions to match the saved tab order.
+    pub fn restore_tab_order(&mut self) {
+        let data = match std::fs::read_to_string(TAB_ORDER_FILE) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let saved_order: Vec<&str> = data.lines().collect();
+        if saved_order.is_empty() {
+            return;
+        }
+
+        // Sort sessions by their position in the saved order.
+        // Sessions not in the saved list go to the end.
+        self.sessions.sort_by_key(|s| {
+            saved_order
+                .iter()
+                .position(|n| *n == s.name)
+                .unwrap_or(usize::MAX)
+        });
     }
 
     fn next_instance_number(&self, project_name: &str) -> u32 {
@@ -97,6 +127,8 @@ impl SessionManager {
             + 1
     }
 }
+
+const TAB_ORDER_FILE: &str = "/tmp/aide-tab-order";
 
 fn parse_session_name(name: &str) -> Option<(String, u32)> {
     let last_underscore = name.rfind('_')?;
