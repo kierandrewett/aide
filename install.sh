@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO="kierandrewett/aide"
 INSTALL_DIR="${AIDE_INSTALL_DIR:-$HOME/.local/bin}"
+VERSION="${1:-latest}"
 
 # Detect platform
 OS="$(uname -s)"
@@ -28,13 +29,18 @@ esac
 
 ARCHIVE="aide-${ARCH}-${PLATFORM}.tar.gz"
 
-# Get latest release tag
-echo "Fetching latest release..."
-TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
-
-if [ -z "$TAG" ]; then
-    echo "Error: Could not determine latest release"
-    exit 1
+# Resolve version
+if [ "$VERSION" = "latest" ]; then
+    echo "Fetching latest release..."
+    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name"' | cut -d'"' -f4 || true)
+    if [ -z "$TAG" ]; then
+        echo "Error: No releases found. Check https://github.com/${REPO}/releases"
+        exit 1
+    fi
+else
+    TAG="$VERSION"
+    # Prefix with v if needed
+    [[ "$TAG" == v* ]] || TAG="v${TAG}"
 fi
 
 echo "Installing aide ${TAG} (${ARCH}-${PLATFORM})..."
@@ -45,7 +51,11 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Downloading ${URL}..."
-curl -fsSL "$URL" -o "${TMPDIR}/${ARCHIVE}"
+if ! curl -fsSL "$URL" -o "${TMPDIR}/${ARCHIVE}"; then
+    echo "Error: Failed to download ${ARCHIVE} for ${TAG}"
+    echo "Check available releases at https://github.com/${REPO}/releases"
+    exit 1
+fi
 
 # Extract
 tar xzf "${TMPDIR}/${ARCHIVE}" -C "$TMPDIR"
@@ -56,15 +66,14 @@ mv "${TMPDIR}/aide" "${INSTALL_DIR}/aide"
 chmod +x "${INSTALL_DIR}/aide"
 
 echo ""
-echo "aide installed to ${INSTALL_DIR}/aide"
+echo "aide ${TAG} installed to ${INSTALL_DIR}/aide"
 
 # Check PATH
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
     echo ""
-    echo "WARNING: ${INSTALL_DIR} is not in your PATH."
-    echo "Add it with:"
+    echo "Note: ${INSTALL_DIR} is not in your PATH. Add it with:"
     echo ""
-    echo "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.bashrc"
+    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
     echo ""
 fi
 
