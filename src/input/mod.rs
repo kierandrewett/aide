@@ -24,6 +24,7 @@ pub enum Action {
     ForwardSpecial(String),
     ForwardCtrl(char),
     EscapeKey,
+    MouseClick(u16, u16),
     None,
 }
 
@@ -183,6 +184,9 @@ fn map_mouse(mouse: MouseEvent) -> Option<Action> {
     match mouse.kind {
         MouseEventKind::ScrollUp => Some(Action::ScrollUp),
         MouseEventKind::ScrollDown => Some(Action::ScrollDown),
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            Some(Action::MouseClick(mouse.column, mouse.row))
+        }
         _ => None,
     }
 }

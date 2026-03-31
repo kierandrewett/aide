@@ -34,6 +34,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
         .split(content_area);
 
+    app.tab_bar_area = tab_chunks[0];
     draw_tabs(frame, app, tab_chunks[0], is_narrow);
     let body_area = tab_chunks[1];
 
@@ -47,6 +48,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     if app.show_right_panel && is_narrow {
+        app.output_area = Rect::default();
+        app.git_panel_area = body_area;
         draw_right_panel(frame, app, body_area, is_narrow);
     } else if app.show_right_panel {
         let h_chunks = Layout::default()
@@ -54,9 +57,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(body_area);
 
+        app.output_area = h_chunks[0];
+        app.git_panel_area = h_chunks[1];
         draw_claude_output(frame, app, h_chunks[0], is_narrow);
         draw_right_panel(frame, app, h_chunks[1], is_narrow);
     } else {
+        app.output_area = body_area;
+        app.git_panel_area = Rect::default();
         draw_claude_output(frame, app, body_area, is_narrow);
     }
 
@@ -330,45 +337,54 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
 
     // Render manually with overflow indicators
     let mut spans: Vec<Span> = Vec::new();
+    let mut tab_click_zones: Vec<(u16, u16, usize)> = Vec::new();
+
+    // Track x position (account for block border on non-narrow)
+    let mut cursor_x = area.x + if is_narrow { 0 } else { 1 };
 
     if has_left {
         spans.push(Span::styled("◀ ", Style::default().fg(Color::DarkGray)));
+        cursor_x += 2;
     }
 
     for (i, title) in visible_titles.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(divider, Style::default().fg(Color::DarkGray)));
+            cursor_x += divider_w as u16;
         }
         let is_sel = i == visible_selected;
-        // Re-style: the title already has styling but Tabs widget applies highlight_style
-        // We need to manually apply the highlight style for selected
+        let text = title
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>();
+        let tab_text = format!(" {} ", text);
+        let tab_w = tab_text.width() as u16;
+
+        // Record click zone: (x_start, x_end, tab_index)
+        let tab_index = start + i;
+        tab_click_zones.push((cursor_x, cursor_x + tab_w, tab_index));
+
         if is_sel {
-            let text = title
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect::<String>();
             spans.push(Span::styled(
-                format!(" {} ", text),
+                tab_text,
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::Blue)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            let text = title
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect::<String>();
             let style = title.spans.first().map(|s| s.style).unwrap_or_default();
-            spans.push(Span::styled(format!(" {} ", text), style));
+            spans.push(Span::styled(tab_text, style));
         }
+        cursor_x += tab_w;
     }
 
     if has_right {
         spans.push(Span::styled(" ▶", Style::default().fg(Color::DarkGray)));
     }
+
+    app.tab_click_zones = tab_click_zones;
 
     let tab_line = Line::from(spans);
     let paragraph = Paragraph::new(tab_line).block(block);
