@@ -237,7 +237,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("select project   ", Style::default().fg(Color::DarkGray)),
+        Span::styled("open folder   ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "Ctrl+X ",
             Style::default()
@@ -252,42 +252,26 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
-    let is_focused = app.focus == FocusPanel::Output;
     let on_welcome = app.is_on_welcome();
 
-    let mut titles: Vec<Line> = app
+    let mut titles: Vec<(String, bool, bool)> = app
         .session_manager
         .sessions
         .iter()
         .enumerate()
         .map(|(i, s)| {
             let is_active = !on_welcome && i == app.session_manager.active_index;
-            let style = if is_active {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
             let label = if s.has_notification && !is_active {
-                format!("🔔 {}", s.name)
+                format!("* {}", s.name)
             } else {
                 s.name.clone()
             };
-            Line::from(Span::styled(label, style))
+            (label, is_active, s.has_notification && !is_active)
         })
         .collect();
 
-    // Add the welcome tab if it exists
     if app.show_welcome || app.session_manager.sessions.is_empty() {
-        let style = if on_welcome {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        titles.push(Line::from(Span::styled("aide", style)));
+        titles.push(("aide".to_string(), on_welcome, false));
     }
 
     let selected = if on_welcome {
@@ -296,35 +280,17 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
         app.session_manager.active_index
     };
 
-    let border_color = if is_focused {
-        FOCUSED_BORDER
-    } else {
-        UNFOCUSED_BORDER
-    };
+    // Consistent tab bar: bottom border only, no title, dark background
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::Rgb(60, 60, 60)));
 
-    let block = if is_narrow {
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(border_color))
-    } else {
-        focused_block(" Sessions ", is_focused)
-    };
-
-    let divider = if is_narrow { " │ " } else { " | " };
+    let divider = " ";
     let divider_w = divider.width();
 
-    // Calculate available width inside the block (subtract borders)
-    let inner_w = if is_narrow {
-        area.width as usize
-    } else {
-        area.width.saturating_sub(2) as usize // side borders
-    };
-
-    // Compute each tab's display width (including " name " padding)
-    let tab_widths: Vec<usize> = titles.iter().map(|t| t.width() + 2).collect();
-
-    // Stable scroll offset — only shift when selected tab is out of view
-    let arrow_w = 2; // "◀ " or " ▶"
+    let inner_w = area.width as usize;
+    let tab_widths: Vec<usize> = titles.iter().map(|(label, _, _)| label.width() + 2).collect();
+    let arrow_w = 2;
     let total_w: usize =
         tab_widths.iter().sum::<usize>() + titles.len().saturating_sub(1) * divider_w;
 
@@ -335,18 +301,16 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let needs_overflow = total_w > inner_w;
 
     if needs_overflow && !titles.is_empty() {
-        // Ensure selected tab is visible by adjusting scroll offset
         if selected < start {
             start = selected;
         }
 
-        // Find how many tabs fit from `start`
         end = start;
         let mut used = 0usize;
         #[allow(clippy::needless_range_loop)]
         for i in start..titles.len() {
-            let left_space = if i > 0 && start > 0 { arrow_w } else { 0 };
-            let right_space = arrow_w; // assume more to the right
+            let left_space = if start > 0 { arrow_w } else { 0 };
+            let right_space = arrow_w;
             let budget = inner_w.saturating_sub(left_space + right_space);
 
             let cost = if i == start {
@@ -361,12 +325,10 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
             end = i + 1;
         }
 
-        // If selected is past the visible end, shift start right
         if selected >= end {
             end = selected + 1;
             used = tab_widths[selected];
             start = selected;
-            // Expand left to fill
             while start > 0 {
                 let left_space = if start - 1 > 0 { arrow_w } else { 0 };
                 let right_space = if end < titles.len() { arrow_w } else { 0 };
@@ -380,27 +342,23 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
             }
         }
 
-        // Recalculate: if we're at the end, no right arrow needed — try fitting more
         if end >= titles.len() {
-            let right_space = 0;
             let left_space = if start > 0 { arrow_w } else { 0 };
-            let budget = inner_w.saturating_sub(left_space + right_space);
+            let budget = inner_w.saturating_sub(left_space);
             let mut recalc_used: usize = tab_widths[start..end].iter().sum::<usize>()
                 + (end - start).saturating_sub(1) * divider_w;
             while start > 0 {
                 let new_left = if start - 1 > 0 { arrow_w } else { 0 };
-                let new_budget = inner_w.saturating_sub(new_left);
                 let cost = divider_w + tab_widths[start - 1];
-                if recalc_used + cost > new_budget {
+                if recalc_used + cost > inner_w.saturating_sub(new_left) {
                     break;
                 }
                 recalc_used += cost;
                 start -= 1;
             }
-            let _ = budget; // used above
+            let _ = budget;
         }
 
-        // Update the persistent scroll offset
         app.tab_scroll_offset = start;
     } else {
         start = 0;
@@ -411,57 +369,73 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let has_left = start > 0;
     let has_right = end < titles.len();
 
-    // Build visible titles with adjusted selected index
-    let visible_titles: Vec<Line> = titles[start..end].to_vec();
+    let visible_titles: Vec<&(String, bool, bool)> = titles[start..end].iter().collect();
     let visible_selected = selected.saturating_sub(start);
 
-    // Render manually with overflow indicators
     let mut spans: Vec<Span> = Vec::new();
     let mut tab_click_zones: Vec<(u16, u16, usize)> = Vec::new();
-
-    // Track x position (account for block border on non-narrow)
-    let mut cursor_x = area.x + if is_narrow { 0 } else { 1 };
+    let mut cursor_x = area.x;
 
     if has_left {
-        spans.push(Span::styled("◀ ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            "◀ ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .bg(Color::Rgb(30, 30, 30)),
+        ));
         cursor_x += 2;
     }
 
-    for (i, title) in visible_titles.iter().enumerate() {
+    for (i, (label, _is_active, has_notif)) in visible_titles.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(divider, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                divider,
+                Style::default().bg(Color::Rgb(30, 30, 30)),
+            ));
             cursor_x += divider_w as u16;
         }
         let is_sel = i == visible_selected;
-        let text = title
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect::<String>();
-        let tab_text = format!(" {} ", text);
+        let tab_text = format!(" {} ", label);
         let tab_w = tab_text.width() as u16;
 
-        // Record click zone: (x_start, x_end, tab_index)
         let tab_index = start + i;
         tab_click_zones.push((cursor_x, cursor_x + tab_w, tab_index));
 
-        if is_sel {
-            spans.push(Span::styled(
-                tab_text,
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-            ));
+        let style = if is_sel {
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::Rgb(60, 60, 80))
+                .add_modifier(Modifier::BOLD)
+        } else if *has_notif {
+            Style::default()
+                .fg(Color::Yellow)
+                .bg(Color::Rgb(30, 30, 30))
         } else {
-            let style = title.spans.first().map(|s| s.style).unwrap_or_default();
-            spans.push(Span::styled(tab_text, style));
-        }
+            Style::default()
+                .fg(Color::Rgb(140, 140, 140))
+                .bg(Color::Rgb(30, 30, 30))
+        };
+
+        spans.push(Span::styled(tab_text, style));
         cursor_x += tab_w;
     }
 
+    // Fill remaining space with background
+    let remaining = (area.width as usize).saturating_sub(cursor_x.saturating_sub(area.x) as usize + if has_right { 2 } else { 0 });
+    if remaining > 0 {
+        spans.push(Span::styled(
+            " ".repeat(remaining),
+            Style::default().bg(Color::Rgb(30, 30, 30)),
+        ));
+    }
+
     if has_right {
-        spans.push(Span::styled(" ▶", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            " ▶",
+            Style::default()
+                .fg(Color::DarkGray)
+                .bg(Color::Rgb(30, 30, 30)),
+        ));
     }
 
     app.tab_click_zones = tab_click_zones;
@@ -502,12 +476,7 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     };
 
     let title = if app.is_typing() {
-        " Output  ● ".to_string()
-    } else if !app.follow_mode && max_scroll_back > 0 {
-        let pct = ((max_scroll_back - app.scroll_offset.min(max_scroll_back)) as f32
-            / max_scroll_back as f32
-            * 100.0) as u16;
-        format!(" Output  ↑{} ({}%) ", app.scroll_offset, pct)
+        " Output ● ".to_string()
     } else {
         " Output ".to_string()
     };
