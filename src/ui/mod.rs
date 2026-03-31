@@ -422,17 +422,20 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     };
 
     let title = if app.is_typing() {
-        " Output  ● "
-    } else if !app.follow_mode {
-        " Output  ↑ scroll "
+        " Output  ● ".to_string()
+    } else if !app.follow_mode && max_scroll_back > 0 {
+        let pct = ((max_scroll_back - app.scroll_offset.min(max_scroll_back)) as f32
+            / max_scroll_back as f32
+            * 100.0) as u16;
+        format!(" Output  ↑{} ({}%) ", app.scroll_offset, pct)
     } else {
-        " Output "
+        " Output ".to_string()
     };
 
     let block = if is_narrow {
         Block::default()
     } else {
-        focused_block(title, is_focused)
+        focused_block(&title, is_focused)
     };
 
     let paragraph = Paragraph::new(text).block(block).scroll((top_offset, 0));
