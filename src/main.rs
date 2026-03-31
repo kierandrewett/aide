@@ -58,7 +58,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
     let git_status_interval = Duration::from_secs(2);
     let git_log_interval = Duration::from_secs(3);
-    let output_interval = Duration::from_millis(50);
+    let output_interval = Duration::from_millis(16);
     let mut last_bg_check = Instant::now();
     let bg_check_interval = Duration::from_secs(2);
 
@@ -75,6 +75,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 let _ = tmux::resize_pane(&name, app.output_width, app.output_height);
             }
             last_resize = (app.output_width, app.output_height);
+        }
+
+        // Auto-show git panel on wide screens when viewing a session
+        let current_size = terminal.size().unwrap_or_default();
+        if current_size.width >= 100 && !app.is_on_welcome() && !app.show_right_panel {
+            app.show_right_panel = true;
+            last_resize = (0, 0);
         }
 
         let now = Instant::now();
@@ -309,6 +316,59 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         if app.scroll_offset == 0 {
                             app.follow_mode = true;
                         }
+                    }
+                }
+                Action::MouseClick(mx, my) => {
+                    // Check tab bar clicks
+                    let tab_area = app.tab_bar_area;
+                    if my >= tab_area.y && my < tab_area.y + tab_area.height {
+                        for &(x_start, x_end, tab_idx) in &app.tab_click_zones {
+                            if mx >= x_start && mx < x_end {
+                                let total_tabs = app.session_manager.sessions.len()
+                                    + if app.show_welcome || app.session_manager.sessions.is_empty()
+                                    {
+                                        1
+                                    } else {
+                                        0
+                                    };
+                                if tab_idx < total_tabs {
+                                    if tab_idx >= app.session_manager.sessions.len() {
+                                        // Clicked the welcome tab
+                                        app.show_welcome = true;
+                                        app.session_manager.active_index = tab_idx;
+                                    } else {
+                                        app.session_manager.active_index = tab_idx;
+                                    }
+                                    clear_active_notification(&mut app);
+                                    app.scroll_offset = 0;
+                                    app.follow_mode = true;
+                                    app.git_log_limit = 100;
+                                    app.git_log_scroll = 0;
+                                    app.git_status_scroll = 0;
+                                    app.refresh_data();
+                                    last_resize = (0, 0);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    // Check output panel click
+                    else if app.output_area.width > 0
+                        && my >= app.output_area.y
+                        && my < app.output_area.y + app.output_area.height
+                        && mx >= app.output_area.x
+                        && mx < app.output_area.x + app.output_area.width
+                    {
+                        app.focus = app::FocusPanel::Output;
+                    }
+                    // Check git panel click
+                    else if app.git_panel_area.width > 0
+                        && my >= app.git_panel_area.y
+                        && my < app.git_panel_area.y + app.git_panel_area.height
+                        && mx >= app.git_panel_area.x
+                        && mx < app.git_panel_area.x + app.git_panel_area.width
+                    {
+                        app.focus = app::FocusPanel::GitPanel;
                     }
                 }
                 Action::None => {}

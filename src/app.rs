@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Result;
+use ratatui::layout::Rect;
 
 use crate::config::Config;
 use crate::git;
@@ -43,6 +44,12 @@ pub struct App {
     pub git_log_has_more: bool,
     pub show_welcome: bool,
     pub tab_scroll_offset: usize,
+    // Click target areas (set by UI each frame)
+    pub tab_bar_area: Rect,
+    pub output_area: Rect,
+    pub git_panel_area: Rect,
+    /// (x_start, x_end) for each tab in the tab bar, plus the tab index
+    pub tab_click_zones: Vec<(u16, u16, usize)>,
 }
 
 impl App {
@@ -79,6 +86,10 @@ impl App {
             git_log_has_more: true,
             show_welcome: true,
             tab_scroll_offset: 0,
+            tab_bar_area: Rect::default(),
+            output_area: Rect::default(),
+            git_panel_area: Rect::default(),
+            tab_click_zones: Vec::new(),
         }
     }
 
