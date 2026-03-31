@@ -939,113 +939,192 @@ fn tilde_path(path: &str) -> String {
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let on_splash = app.is_on_welcome();
-
     let w = area.width as usize;
     let is_narrow = area.height >= 2;
 
-    let (left_text, git_text, hints): (String, String, &str) = if on_splash {
-        let left = " aide ".to_string();
-        let git = String::new();
-        let h = if app.session_manager.sessions.is_empty() {
-            "^P pick  ^X exit "
-        } else {
-            "Tab/S-Tab switch  ^P pick  ^W close  ^X exit "
-        };
-        (left, git, h)
+    // Build path segment
+    let directory = if on_splash {
+        "aide".to_string()
+    } else if let Some(s) = app.session_manager.active_session() {
+        tilde_path(&s.directory)
     } else {
-        let directory = if let Some(s) = app.session_manager.active_session() {
-            tilde_path(&s.directory)
-        } else {
-            "~".to_string()
-        };
-
-        let branch = if app.git_branch.is_empty() {
-            "—".to_string()
-        } else {
-            app.git_branch.clone()
-        };
-
-        let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
-        let upstream_text = format!("↓{} ↑{}", behind, ahead);
-
-        let diff_text = match app.git_diff_stats {
-            Some((added, deleted)) => format!("+{} -{}", added, deleted),
-            None => "+0 -0".to_string(),
-        };
-
-        let typing_indicator = if app.is_typing() { " ●" } else { "" };
-
-        let left = format!(" {}{} ", directory, typing_indicator);
-        let git = format!(" {} {} {} ", branch, upstream_text, diff_text);
-
-        let h = if app.focus == FocusPanel::GitPanel && app.show_right_panel {
-            "^G back  ↑↓ scroll  ^X exit "
-        } else {
-            "Tab/S-Tab switch  ^T new  ^W close  ^G git  ^X exit "
-        };
-
-        (left, git, h)
+        "~".to_string()
     };
 
-    let left_w = left_text.width();
-    let git_w = git_text.width();
-    let hints_w = hints.width();
+    // Build branch + upstream + diff segment
+    let git_spans: Vec<Span> = if on_splash || app.git_branch.is_empty() {
+        Vec::new()
+    } else {
+        let branch = &app.git_branch;
+        let (behind, ahead) = app.git_upstream.unwrap_or((0, 0));
+        let (added, deleted) = app.git_diff_stats.unwrap_or((0, 0));
+
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            format!(" {} ", branch),
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(Color::Rgb(40, 40, 40))
+                .add_modifier(Modifier::BOLD),
+        ));
+        if behind > 0 || ahead > 0 {
+            let mut sync = String::new();
+            if ahead > 0 {
+                sync.push_str(&format!("↑{}", ahead));
+            }
+            if behind > 0 {
+                if !sync.is_empty() {
+                    sync.push(' ');
+                }
+                sync.push_str(&format!("↓{}", behind));
+            }
+            spans.push(Span::styled(
+                format!(" {} ", sync),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .bg(Color::Rgb(40, 40, 40)),
+            ));
+        }
+        if added > 0 || deleted > 0 {
+            spans.push(Span::styled(
+                format!(" +{}", added),
+                Style::default()
+                    .fg(Color::Green)
+                    .bg(Color::Rgb(40, 40, 40)),
+            ));
+            spans.push(Span::styled(
+                format!(" -{} ", deleted),
+                Style::default()
+                    .fg(Color::Red)
+                    .bg(Color::Rgb(40, 40, 40)),
+            ));
+        }
+        spans
+    };
+
+    // Build keybind hints
+    let hint_spans: Vec<Span> = if on_splash {
+        if app.session_manager.sessions.is_empty() {
+            vec![
+                hint_key("^P"),
+                hint_label("commands "),
+                hint_key("^X"),
+                hint_label("exit "),
+            ]
+        } else {
+            vec![
+                hint_key("^P"),
+                hint_label("commands "),
+                hint_key("^X"),
+                hint_label("exit "),
+            ]
+        }
+    } else if app.focus == FocusPanel::GitPanel && app.show_right_panel {
+        vec![
+            hint_key("^G"),
+            hint_label("back "),
+            hint_key("^X"),
+            hint_label("exit "),
+        ]
+    } else {
+        vec![
+            hint_key("^P"),
+            hint_label("commands "),
+            hint_key("^G"),
+            hint_label("toggle "),
+            hint_key("^X"),
+            hint_label("exit "),
+        ]
+    };
+
+    let git_w: usize = git_spans.iter().map(|s| s.content.width()).sum();
+    let hints_w: usize = hint_spans.iter().map(|s| s.content.width()).sum();
+
+    // Truncate path if needed — never truncate branch/changes before path
+    let max_path_w = w
+        .saturating_sub(git_w)
+        .saturating_sub(hints_w)
+        .saturating_sub(2); // minimal padding
+    let path_display = if directory.width() > max_path_w && max_path_w > 4 {
+        truncate_str(&directory, max_path_w)
+    } else {
+        directory.clone()
+    };
+
+    let path_span = Span::styled(
+        format!(" {} ", path_display),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    let path_w = path_display.width() + 2;
 
     if is_narrow {
-        let line1_pad = w.saturating_sub(left_w).saturating_sub(git_w);
-        let line1 = Line::from(vec![
-            Span::styled(
-                &left_text,
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ".repeat(line1_pad), Style::default().bg(Color::DarkGray)),
-            Span::styled(
-                &git_text,
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        // Two-row layout
+        // Row 1: [path] [pad] [branch + stats]
+        let line1_pad = w.saturating_sub(path_w + git_w);
+        let mut line1_spans = vec![path_span.clone()];
+        line1_spans.push(Span::styled(
+            " ".repeat(line1_pad),
+            Style::default().bg(Color::Rgb(40, 40, 40)),
+        ));
+        line1_spans.extend(git_spans.iter().cloned());
+        let line1 = Line::from(line1_spans);
 
+        // Row 2: [hints left-aligned]
         let line2_pad = w.saturating_sub(hints_w);
-        let line2 = Line::from(vec![
-            Span::styled(" ".repeat(line2_pad), Style::default().bg(Color::DarkGray)),
-            Span::styled(hints, Style::default().fg(Color::Gray).bg(Color::DarkGray)),
-        ]);
+        let mut line2_spans: Vec<Span> = Vec::new();
+        line2_spans.push(Span::styled(
+            " ",
+            Style::default().bg(Color::Rgb(40, 40, 40)),
+        ));
+        line2_spans.extend(hint_spans.iter().cloned());
+        if line2_pad > 1 {
+            line2_spans.push(Span::styled(
+                " ".repeat(line2_pad.saturating_sub(1)),
+                Style::default().bg(Color::Rgb(40, 40, 40)),
+            ));
+        }
+        let line2 = Line::from(line2_spans);
 
         let text = Text::from(vec![line1, line2]);
         frame.render_widget(Paragraph::new(text), area);
     } else {
-        let padding = w
-            .saturating_sub(left_w)
-            .saturating_sub(git_w)
-            .saturating_sub(hints_w);
+        // Single-row: [path] [branch+stats] [pad] [hints]
+        let left_w = path_w + git_w;
+        let padding = w.saturating_sub(left_w + hints_w);
 
-        let bar = Line::from(vec![
-            Span::styled(
-                &left_text,
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ".repeat(padding), Style::default().bg(Color::DarkGray)),
-            Span::styled(
-                &git_text,
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(hints, Style::default().fg(Color::Gray).bg(Color::DarkGray)),
-        ]);
+        let mut spans = vec![path_span];
+        spans.extend(git_spans);
+        spans.push(Span::styled(
+            " ".repeat(padding),
+            Style::default().bg(Color::Rgb(40, 40, 40)),
+        ));
+        spans.extend(hint_spans);
 
+        let bar = Line::from(spans);
         frame.render_widget(Paragraph::new(bar), area);
     }
+}
+
+fn hint_key(key: &str) -> Span<'_> {
+    Span::styled(
+        key,
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(40, 40, 40))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn hint_label(label: &str) -> Span<'_> {
+    Span::styled(
+        label,
+        Style::default()
+            .fg(Color::DarkGray)
+            .bg(Color::Rgb(40, 40, 40)),
+    )
 }
 
 fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
