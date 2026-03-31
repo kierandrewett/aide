@@ -439,8 +439,30 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     };
 
     let paragraph = Paragraph::new(text).block(block).scroll((top_offset, 0));
-
     frame.render_widget(paragraph, area);
+
+    // Narrow mode: render scroll indicator as overlay in top-right
+    if is_narrow && !app.follow_mode && max_scroll_back > 0 {
+        let pct = ((max_scroll_back - app.scroll_offset.min(max_scroll_back)) as f32
+            / max_scroll_back as f32
+            * 100.0) as u16;
+        let indicator = format!(" ↑{} ({}%) ", app.scroll_offset, pct);
+        let ind_w = indicator.width() as u16;
+        let ind_area = Rect::new(
+            area.x + area.width.saturating_sub(ind_w),
+            area.y,
+            ind_w,
+            1,
+        );
+        let ind_span = Span::styled(
+            indicator,
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+        frame.render_widget(Paragraph::new(Line::from(ind_span)), ind_area);
+    }
 }
 
 fn draw_right_panel(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
