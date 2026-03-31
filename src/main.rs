@@ -133,7 +133,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
             if app.show_picker {
                 match action {
-                    Action::Confirm => app.picker_select_confirm()?,
+                    Action::Confirm => {
+                        app.picker_select_confirm()?;
+                        last_resize = (0, 0);
+                    }
                     Action::Cancel => app.close_picker(),
                     Action::PickerChar(c) => {
                         app.picker_filter.push(c);
