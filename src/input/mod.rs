@@ -8,18 +8,19 @@ pub enum Action {
     NextTab,
     PrevTab,
     NewInstance,
-    ProjectPicker,
+    CommandPalette,
     CloseInstance,
     TogglePanel,
+    ToggleFileBrowser,
     Exit,
-    // Picker-only actions (only used when picker/dialog is open)
+    // Picker/dialog actions
     ScrollUp,
     ScrollDown,
     Confirm,
     Cancel,
     PickerChar(char),
     PickerBackspace,
-    // Forward to tmux — batch of literal chars or a single special key
+    // Forward to PTY
     ForwardChars(String),
     ForwardSpecial(String),
     ForwardCtrl(char),
@@ -29,16 +30,13 @@ pub enum Action {
 }
 
 /// Drain all pending events, returning a list of actions.
-/// Batches consecutive character inputs into a single ForwardChars.
 pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
     let mut actions = Vec::new();
 
-    // Wait for first event with timeout
     if !event::poll(timeout).unwrap_or(false) {
         return actions;
     }
 
-    // Drain all available events
     loop {
         if !event::poll(Duration::ZERO).unwrap_or(false) {
             break;
@@ -56,11 +54,16 @@ pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
                     actions.push(action);
                 }
             }
+            Ok(Event::Paste(text)) => {
+                // Bracketed paste — forward as raw chars
+                if !text.is_empty() {
+                    actions.push(Action::ForwardChars(text));
+                }
+            }
             _ => break,
         }
     }
 
-    // Batch consecutive ForwardChars
     coalesce_chars(actions)
 }
 
@@ -90,7 +93,7 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         return Action::None;
     }
 
-    // Aide-reserved bindings — always intercepted
+    // Aide-reserved bindings
     match key {
         KeyEvent {
             code: KeyCode::Char('t'),
@@ -101,7 +104,7 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             code: KeyCode::Char('p'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => return Action::ProjectPicker,
+        } => return Action::CommandPalette,
         KeyEvent {
             code: KeyCode::Char('w'),
             modifiers: KeyModifiers::CONTROL,
@@ -112,6 +115,11 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             modifiers: KeyModifiers::CONTROL,
             ..
         } => return Action::TogglePanel,
+        KeyEvent {
+            code: KeyCode::Char('b'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => return Action::ToggleFileBrowser,
         KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers::CONTROL,
@@ -158,9 +166,15 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         };
     }
 
-    // Forward to tmux
+    // Forward to PTY
     match (&key.code, key.modifiers) {
-        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => Action::ForwardCtrl(*c),
+        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardCtrl(*c)
+        }
+        // Shift+Enter sends newline
+        (KeyCode::Enter, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Enter".into())
+        }
         (KeyCode::Char(c), _) => Action::ForwardChars(c.to_string()),
         (KeyCode::Enter, _) => Action::ForwardSpecial("Enter".into()),
         (KeyCode::Backspace, _) => Action::ForwardSpecial("BSpace".into()),
