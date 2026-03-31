@@ -14,6 +14,86 @@ use crate::app::{App, FocusPanel};
 const FOCUSED_BORDER: Color = Color::Cyan;
 const UNFOCUSED_BORDER: Color = Color::DarkGray;
 
+/// Render a scrollbar on the right edge of a panel area.
+fn render_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    is_narrow: bool,
+    scroll_offset: u16,
+    max_scroll: u16,
+) {
+    if max_scroll == 0 || area.height < 3 {
+        return;
+    }
+
+    let border_top: u16 = if is_narrow { 1 } else { 1 };
+    let border_bottom: u16 = if is_narrow { 0 } else { 1 };
+    let track_height = area
+        .height
+        .saturating_sub(border_top + border_bottom)
+        .max(1) as usize;
+    if track_height < 2 {
+        return;
+    }
+
+    let total_content = max_scroll + track_height as u16;
+    let thumb_size = ((track_height as f64 * track_height as f64) / total_content as f64)
+        .ceil()
+        .max(1.0)
+        .min(track_height as f64) as usize;
+
+    let scrollable = track_height.saturating_sub(thumb_size);
+    let thumb_pos = if max_scroll > 0 {
+        ((scroll_offset as f64 / max_scroll as f64) * scrollable as f64).round() as usize
+    } else {
+        0
+    };
+
+    let bar_x = area.x + area.width.saturating_sub(1);
+    let bar_y_start = area.y + border_top;
+
+    for i in 0..track_height {
+        let y = bar_y_start + i as u16;
+        if y >= area.y + area.height.saturating_sub(border_bottom) {
+            break;
+        }
+        let ch = if i >= thumb_pos && i < thumb_pos + thumb_size {
+            "┃"
+        } else {
+            "│"
+        };
+        let style = if i >= thumb_pos && i < thumb_pos + thumb_size {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::Rgb(60, 60, 60))
+        };
+        let scroll_area = Rect::new(bar_x, y, 1, 1);
+        frame.render_widget(Paragraph::new(Span::styled(ch, style)), scroll_area);
+    }
+
+    // Scroll position overlay indicator at top-right
+    if scroll_offset > 0 {
+        let pct = (scroll_offset as f64 / max_scroll as f64 * 100.0) as u16;
+        let indicator = format!(" {}% ", pct);
+        let ind_w = indicator.width() as u16;
+        let ind_x = area.x + area.width.saturating_sub(ind_w + 1);
+        let ind_y = area.y;
+        if ind_w + 1 < area.width {
+            let ind_area = Rect::new(ind_x, ind_y, ind_w, 1);
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    indicator,
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                ind_area,
+            );
+        }
+    }
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let is_narrow = size.width < 100;
@@ -441,28 +521,9 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     let paragraph = Paragraph::new(text).block(block).scroll((top_offset, 0));
     frame.render_widget(paragraph, area);
 
-    // Narrow mode: render scroll indicator as overlay in top-right
-    if is_narrow && !app.follow_mode && max_scroll_back > 0 {
-        let pct = ((max_scroll_back - app.scroll_offset.min(max_scroll_back)) as f32
-            / max_scroll_back as f32
-            * 100.0) as u16;
-        let indicator = format!(" ↑{} ({}%) ", app.scroll_offset, pct);
-        let ind_w = indicator.width() as u16;
-        let ind_area = Rect::new(
-            area.x + area.width.saturating_sub(ind_w),
-            area.y,
-            ind_w,
-            1,
-        );
-        let ind_span = Span::styled(
-            indicator,
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
-        frame.render_widget(Paragraph::new(Line::from(ind_span)), ind_area);
-    }
+    // Render scrollbar on output
+    let scroll_pos = max_scroll_back.saturating_sub(app.scroll_offset.min(max_scroll_back));
+    render_scrollbar(frame, area, is_narrow, scroll_pos, max_scroll_back);
 }
 
 fn draw_right_panel(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
@@ -493,13 +554,15 @@ fn git_panel_block<'a>(title: &'a str, is_focused: bool, is_narrow: bool) -> Blo
 
 fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::GitPanel;
+    let border_w: u16 = if is_narrow { 0 } else { 2 };
+    let inner_width = area.width.saturating_sub(border_w) as usize;
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Branch header with local → remote
+    // Branch header
     let branch_line = if app.git_remote_branch.is_empty() {
         Line::from(vec![
-            Span::styled(" ⎇ ", Style::default().fg(Color::Cyan)),
+            Span::styled(" ", Style::default()),
             Span::styled(
                 &app.git_branch,
                 Style::default()
@@ -523,7 +586,7 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
             Span::styled(parts, Style::default().fg(Color::Yellow))
         };
         Line::from(vec![
-            Span::styled(" ⎇ ", Style::default().fg(Color::Cyan)),
+            Span::styled(" ", Style::default()),
             Span::styled(
                 &app.git_branch,
                 Style::default()
@@ -531,17 +594,17 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" → ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&app.git_remote_branch, Style::default().fg(Color::Blue)),
+            Span::styled(&app.git_remote_branch, Style::default().fg(Color::DarkGray)),
             sync_icon,
         ])
     };
     lines.push(branch_line);
     lines.push(Line::from(""));
 
-    // Parse status lines with icons
+    // Parse status lines: [filename] [flex space] +added -removed [A/M/D]
     for line in app.git_status.lines() {
         if line.starts_with("##") {
-            continue; // skip branch line, we render our own
+            continue;
         }
 
         let trimmed = line.trim();
@@ -549,7 +612,6 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
             continue;
         }
 
-        // Parse the two-char status code
         let (index_status, worktree_status) = if line.len() >= 2 {
             (
                 line.chars().next().unwrap_or(' '),
@@ -561,32 +623,60 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
 
         let filename = if line.len() > 3 { &line[3..] } else { trimmed };
 
-        let (icon, color) = match (index_status, worktree_status) {
-            ('?', '?') => ("  ？ ", Color::DarkGray),       // untracked
-            ('A', _) | (_, 'A') => ("  ＋ ", Color::Green), // added
-            ('D', _) | (_, 'D') => ("  ✕ ", Color::Red),    // deleted
-            ('R', _) => ("  ➜ ", Color::Magenta),           // renamed
-            ('M', _) => ("  ● ", Color::Green),             // staged modified
-            (_, 'M') => ("  ○ ", Color::Yellow),            // unstaged modified
-            ('C', _) => ("  ⊕ ", Color::Cyan),              // copied
-            _ => ("  ∙ ", Color::White),
+        // Determine the primary status letter and color
+        let (status_char, status_color) = match (index_status, worktree_status) {
+            ('?', '?') => ('?', Color::DarkGray),
+            ('A', _) | (_, 'A') => ('A', Color::Green),
+            ('D', _) | (_, 'D') => ('D', Color::Red),
+            ('R', _) => ('R', Color::Magenta),
+            ('M', _) | (_, 'M') => ('M', Color::Yellow),
+            ('C', _) => ('C', Color::Cyan),
+            _ => ('?', Color::DarkGray),
         };
 
-        let staged_marker = match index_status {
-            'M' | 'A' | 'D' | 'R' | 'C' => Span::styled(" ✓", Style::default().fg(Color::Green)),
-            _ => Span::raw(""),
+        // Get per-file diff stats
+        let (file_added, file_removed) = app
+            .git_file_stats
+            .get(filename)
+            .copied()
+            .unwrap_or((0, 0));
+
+        let added_str = format!("+{}", file_added);
+        let removed_str = format!("-{}", file_removed);
+        let status_str = format!(" {}", status_char);
+
+        // Calculate flexible padding
+        // Layout: " {filename}  {pad}  +N -N  S"
+        let prefix_w = 1; // leading space
+        let fname_w = filename.width();
+        let suffix_w = added_str.width() + 1 + removed_str.width() + status_str.width() + 1;
+        let used = prefix_w + fname_w + 2 + suffix_w;
+        let pad = if inner_width > used {
+            inner_width - used
+        } else {
+            1
         };
 
         lines.push(Line::from(vec![
-            Span::styled(icon, Style::default().fg(color)),
-            Span::styled(filename.to_string(), Style::default().fg(color)),
-            staged_marker,
+            Span::styled(" ", Style::default()),
+            Span::styled(filename.to_string(), Style::default().fg(Color::White)),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(added_str, Style::default().fg(Color::Green)),
+            Span::raw(" "),
+            Span::styled(removed_str, Style::default().fg(Color::Red)),
+            Span::styled(
+                status_str,
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
         ]));
     }
 
     if lines.len() <= 2 {
         lines.push(Line::from(Span::styled(
-            "  ✓ Working tree clean",
+            " ✓ Working tree clean",
             Style::default().fg(Color::Green),
         )));
     }
@@ -597,18 +687,7 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
     let max_scroll = total.saturating_sub(visible);
     app.git_status_scroll = app.git_status_scroll.min(max_scroll);
 
-    let at_top = app.git_status_scroll == 0;
-    let at_bottom = app.git_status_scroll >= max_scroll;
-    let scroll_hint = if max_scroll == 0 {
-        ""
-    } else if at_top {
-        " ↓ more "
-    } else if at_bottom {
-        " ↑ more "
-    } else {
-        " ↑↓ "
-    };
-    let title = format!(" 📋 Status{}", scroll_hint);
+    let title = " Status ".to_string();
     let block = git_panel_block(&title, is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
@@ -616,10 +695,15 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
         .scroll((app.git_status_scroll, 0));
 
     frame.render_widget(paragraph, area);
+
+    // Render scrollbar
+    render_scrollbar(frame, area, is_narrow, app.git_status_scroll, max_scroll);
 }
 
 fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::GitPanel;
+    let border_w: u16 = if is_narrow { 0 } else { 2 };
+    let inner_width = area.width.saturating_sub(border_w) as usize;
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -630,7 +714,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
             continue;
         }
 
-        // Extract the graph prefix (*, |, /, \, spaces) from the rest
+        // Extract graph prefix
         let mut graph_end = 0;
         for (i, ch) in line.char_indices() {
             if matches!(ch, '*' | '|' | '/' | '\\' | ' ') {
@@ -645,11 +729,33 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
 
         let mut spans: Vec<Span> = Vec::new();
 
-        let graph_colored = graph_part.to_string();
-        spans.push(Span::styled(
-            graph_colored,
-            Style::default().fg(Color::Blue),
-        ));
+        // Color graph characters individually for better visual hierarchy
+        let mut graph_str = String::new();
+        for ch in graph_part.chars() {
+            match ch {
+                '*' => {
+                    if !graph_str.is_empty() {
+                        spans.push(Span::styled(
+                            std::mem::take(&mut graph_str),
+                            Style::default().fg(Color::Rgb(80, 80, 120)),
+                        ));
+                    }
+                    spans.push(Span::styled(
+                        "*",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                _ => graph_str.push(ch),
+            }
+        }
+        if !graph_str.is_empty() {
+            spans.push(Span::styled(
+                graph_str,
+                Style::default().fg(Color::Rgb(80, 80, 120)),
+            ));
+        }
 
         if rest.is_empty() {
             lines.push(Line::from(spans));
@@ -664,13 +770,11 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
             continue;
         }
 
-        // Hash
+        // Hash - short and dim
         let hash = parts[0];
         spans.push(Span::styled(
             hash.to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Yellow),
         ));
 
         if parts.len() < 2 {
@@ -680,13 +784,12 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
 
         let remainder = parts[1];
 
-        // Check for decoration (refs) like (HEAD -> main, origin/main)
+        // Check for decoration
         if remainder.starts_with('(') {
             if let Some(close) = remainder.find(')') {
                 let decoration = &remainder[1..close];
-                spans.push(Span::styled(" (", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(" [", Style::default().fg(Color::DarkGray)));
 
-                // Parse individual refs
                 for (j, ref_name) in decoration.split(", ").enumerate() {
                     if j > 0 {
                         spans.push(Span::styled(", ", Style::default().fg(Color::DarkGray)));
@@ -699,7 +802,8 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
                         ));
-                    } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/") {
+                    } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/")
+                    {
                         spans.push(Span::styled(
                             ref_name.to_string(),
                             Style::default().fg(Color::Red),
@@ -720,19 +824,21 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                         ));
                     }
                 }
-                spans.push(Span::styled(") ", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled("] ", Style::default().fg(Color::DarkGray)));
 
-                // Message + time after decoration
                 let after_dec = &remainder[close + 1..].trim_start();
                 if let Some(time_start) = after_dec.rfind('(') {
                     let msg = &after_dec[..time_start].trim_end();
-                    let time = &after_dec[time_start..];
+                    let time_raw = &after_dec[time_start + 1..];
+                    let time_clean = time_raw.trim_end_matches(')');
+                    // Truncate message if needed to fit time
+                    let msg_str = truncate_str(msg, inner_width.saturating_sub(graph_part.width() + hash.len() + 20));
                     spans.push(Span::styled(
-                        msg.to_string(),
+                        msg_str,
                         Style::default().fg(Color::White),
                     ));
                     spans.push(Span::styled(
-                        format!(" {}", time),
+                        format!("  {}", time_clean),
                         Style::default().fg(Color::DarkGray),
                     ));
                 } else {
@@ -751,13 +857,15 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
             // No decoration — message (time)
             if let Some(time_start) = remainder.rfind('(') {
                 let msg = &remainder[..time_start].trim_end();
-                let time = &remainder[time_start..];
+                let time_raw = &remainder[time_start + 1..];
+                let time_clean = time_raw.trim_end_matches(')');
+                let msg_str = truncate_str(msg, inner_width.saturating_sub(graph_part.width() + hash.len() + 15));
                 spans.push(Span::styled(
-                    format!(" {}", msg),
+                    format!(" {}", msg_str),
                     Style::default().fg(Color::White),
                 ));
                 spans.push(Span::styled(
-                    format!(" {}", time),
+                    format!("  {}", time_clean),
                     Style::default().fg(Color::DarkGray),
                 ));
             } else {
@@ -773,7 +881,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
 
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  No commits yet",
+            " No commits yet",
             Style::default().fg(Color::DarkGray),
         )));
     }
@@ -784,20 +892,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let max_scroll = total.saturating_sub(visible);
     app.git_log_scroll = app.git_log_scroll.min(max_scroll);
 
-    let at_top = app.git_log_scroll == 0;
-    let at_bottom = app.git_log_scroll >= max_scroll;
-    let scroll_hint = if max_scroll == 0 {
-        ""
-    } else if at_top {
-        " ↓ more "
-    } else if at_bottom && app.git_log_has_more {
-        " loading... "
-    } else if at_bottom {
-        " ── end ── "
-    } else {
-        " ↑↓ "
-    };
-    let title = format!(" 📜 Log{}", scroll_hint);
+    let title = " Log ".to_string();
     let block = git_panel_block(&title, is_focused, is_narrow);
 
     let paragraph = Paragraph::new(lines)
@@ -805,6 +900,32 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
         .scroll((app.git_log_scroll, 0));
 
     frame.render_widget(paragraph, area);
+
+    // Render scrollbar
+    render_scrollbar(frame, area, is_narrow, app.git_log_scroll, max_scroll);
+}
+
+/// Truncate a string to fit within max_width, adding "..." if truncated.
+fn truncate_str(s: &str, max_width: usize) -> String {
+    if max_width < 4 {
+        return s.chars().take(max_width).collect();
+    }
+    if s.width() <= max_width {
+        s.to_string()
+    } else {
+        let mut result = String::new();
+        let mut w = 0;
+        for ch in s.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if w + cw + 3 > max_width {
+                result.push_str("...");
+                break;
+            }
+            result.push(ch);
+            w += cw;
+        }
+        result
+    }
 }
 
 fn tilde_path(path: &str) -> String {
