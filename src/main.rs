@@ -295,10 +295,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             refresh_git_log(&mut app);
                         }
                     } else {
-                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
-                        if app.scroll_offset == 0 {
-                            app.follow_mode = true;
-                        }
+                        app.follow_mode = false;
+                        app.scroll_offset = app.scroll_offset.saturating_add(1);
                     }
                 }
                 Action::ScrollDown => {
@@ -307,8 +305,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.git_status_scroll = app.git_status_scroll.saturating_sub(1);
                         app.git_log_scroll = app.git_log_scroll.saturating_sub(1);
                     } else {
-                        app.follow_mode = false;
-                        app.scroll_offset = app.scroll_offset.saturating_add(1);
+                        app.scroll_offset = app.scroll_offset.saturating_sub(1);
+                        if app.scroll_offset == 0 {
+                            app.follow_mode = true;
+                        }
                     }
                 }
                 Action::None => {}
