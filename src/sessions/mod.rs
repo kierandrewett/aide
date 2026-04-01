@@ -126,6 +126,7 @@ impl SessionManager {
     }
 
     /// Write input to a specific session.
+    #[allow(dead_code)]
     pub fn write_input_to(&mut self, session_id: &str, data: &[u8]) -> Result<()> {
         let daemon = self.daemon()?;
         daemon.write_input(session_id, data)
@@ -134,7 +135,7 @@ impl SessionManager {
     /// Read incremental output from the active session.
     pub fn read_output(&mut self) -> Result<String> {
         let idx = self.active_index;
-        let (session_id, offset) = {
+        let (session_id, _offset) = {
             let s = self
                 .sessions
                 .get(idx)

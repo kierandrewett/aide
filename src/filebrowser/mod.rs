@@ -215,6 +215,7 @@ impl FileBrowser {
         }
     }
 
+    #[allow(dead_code)]
     pub fn selected_path(&self) -> Option<&Path> {
         self.entries.get(self.selected).map(|e| e.path.as_path())
     }

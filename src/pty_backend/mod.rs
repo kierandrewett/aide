@@ -29,7 +29,7 @@ impl DaemonClient {
         Self::spawn_daemon()?;
 
         // Wait for daemon to be ready (up to 3 seconds)
-        for i in 0..30 {
+        for _i in 0..30 {
             std::thread::sleep(Duration::from_millis(100));
             if let Ok(client) = Self::try_connect(&sock) {
                 return Ok(client);

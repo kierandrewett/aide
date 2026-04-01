@@ -178,6 +178,7 @@ impl App {
     }
 
     /// Open folder by full path (for command palette "Open Folder").
+    #[allow(dead_code)]
     pub fn open_folder(&mut self, path: &str) -> Result<()> {
         let name = std::path::Path::new(path)
             .file_name()
@@ -197,25 +198,9 @@ impl App {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn open_picker(&mut self) {
-        // Redirect picker to command palette
         self.open_command_palette();
-    }
-
-    pub fn close_picker(&mut self) {
-        self.close_command_palette();
-    }
-
-    pub fn picker_select_confirm(&mut self) -> Result<()> {
-        self.command_palette_confirm()
-    }
-
-    pub fn picker_move_down(&mut self) {
-        self.command_palette_move_down();
-    }
-
-    pub fn picker_move_up(&mut self) {
-        self.command_palette_move_up();
     }
 
     // Command palette
@@ -280,8 +265,9 @@ impl App {
             self.close_command_palette();
             match item.kind {
                 PaletteKind::OpenFolder => {
-                    // Fall back to project picker for now
-                    self.open_picker();
+                    // Re-open command palette with "Open:" prefix to filter to projects
+                    self.open_command_palette();
+                    self.command_palette_filter = "Open:".to_string();
                 }
                 PaletteKind::OpenProject(project) => {
                     self.create_session_for_project(&project)?;

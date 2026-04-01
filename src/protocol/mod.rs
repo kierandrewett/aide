@@ -80,6 +80,7 @@ pub fn socket_path() -> std::path::PathBuf {
 }
 
 /// Get the daemon lock file path.
+#[allow(dead_code)]
 pub fn lock_path() -> std::path::PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| format!("/tmp/aide-{}", unsafe { libc::getuid() }));
@@ -88,6 +89,7 @@ pub fn lock_path() -> std::path::PathBuf {
 }
 
 /// Get the daemon log file path.
+#[allow(dead_code)]
 pub fn log_path() -> std::path::PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| format!("/tmp/aide-{}", unsafe { libc::getuid() }));

@@ -204,27 +204,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 continue;
             }
 
-            if app.show_picker {
-                // Redirect picker to command palette
-                match action {
-                    Action::Confirm => {
-                        app.command_palette_confirm()?;
-                        last_resize = (0, 0);
-                    }
-                    Action::Cancel => app.close_command_palette(),
-                    Action::PickerChar(c) => {
-                        app.command_palette_filter.push(c);
-                        app.command_palette_selected = 0;
-                    }
-                    Action::PickerBackspace => {
-                        app.command_palette_filter.pop();
-                        app.command_palette_selected = 0;
-                    }
-                    Action::ScrollDown | Action::NextTab => app.command_palette_move_down(),
-                    Action::ScrollUp | Action::PrevTab => app.command_palette_move_up(),
-                    Action::Exit => app.close_command_palette(),
-                    _ => {}
-                }
+            // Legacy picker is now handled by command palette
+            if app.show_picker && !app.show_command_palette {
+                app.show_picker = false;
+                app.open_command_palette();
                 continue;
             }
 

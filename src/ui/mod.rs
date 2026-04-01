@@ -307,7 +307,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
+fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, _is_narrow: bool) {
     let on_welcome = app.is_on_welcome();
 
     let mut titles: Vec<(String, bool, bool)> = app
@@ -1055,8 +1055,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         vec![
             hint_key("^P"),
             hint_label("commands "),
+            hint_key("^B"),
+            hint_label("files "),
             hint_key("^G"),
-            hint_label("toggle "),
+            hint_label("git "),
             hint_key("^X"),
             hint_label("exit "),
         ]
