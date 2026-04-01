@@ -113,9 +113,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     let mut last_bg_check = Instant::now();
     let bg_check_interval = Duration::from_secs(2);
     loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app))?;
-
-        // Resize PTY and vt100 parser to match our viewport if changed
+        // Resize PTY and vt100 parser BEFORE drawing so the screen dimensions
+        // match the rendering area. Prevents wide content from leaking into
+        // adjacent panels when layout changes (e.g. file browser toggled).
         if (app.output_width, app.output_height) != last_resize
             && app.output_width > 0
             && app.output_height > 0
@@ -130,6 +130,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             }
             last_resize = (app.output_width, app.output_height);
         }
+
+        // Force full repaint every frame: reset both internal buffers so
+        // the diff sends all cells. This prevents stray terminal corruption
+        // (from PTY escape sequences) from persisting.
+        terminal.swap_buffers();
+        terminal.swap_buffers();
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         // Track terminal size
         let current_size = terminal.size().unwrap_or_default();

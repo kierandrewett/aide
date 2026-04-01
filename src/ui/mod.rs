@@ -173,6 +173,7 @@ fn render_scrollbar(
     let bar_x = area.x + area.width.saturating_sub(1);
     let bar_y_start = area.y + border_top;
 
+    let buf = frame.buffer_mut();
     for i in 0..track_height {
         let y = bar_y_start + i as u16;
         if y >= area.y + area.height.saturating_sub(border_bottom) {
@@ -185,8 +186,10 @@ fn render_scrollbar(
         } else {
             Style::default().fg(SCROLLBAR_TRACK)
         };
-        let scroll_area = Rect::new(bar_x, y, 1, 1);
-        frame.render_widget(Paragraph::new(Span::styled(ch, style)), scroll_area);
+        if let Some(cell) = buf.cell_mut((bar_x, y)) {
+            cell.set_symbol(ch);
+            cell.set_style(style);
+        }
     }
 
     // Scroll position overlay indicator at top-right
@@ -222,7 +225,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
-    let tab_height: u16 = 2;
+    let tab_height: u16 = 1;
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -716,6 +719,14 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     // Use vt100 parser for proper terminal rendering
     if let Some(parser) = &mut app.pty_parser {
         let screen = parser.screen_mut();
+
+        // Ensure vt100 screen matches current render area dimensions.
+        // This must happen here (not in the main loop) because the output
+        // area size is only known during layout computation.
+        let (cur_rows, cur_cols) = screen.size();
+        if cur_cols != inner_width || cur_rows != inner_height {
+            screen.set_size(inner_height.max(1), inner_width.max(1));
+        }
         let (_rows, _cols) = screen.size();
 
         // Get max scrollback available
@@ -1737,17 +1748,14 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                 _ => None,
             };
 
-            let status_w = if status_str.is_some() { 2 } else { 0 };
-            let pad = inner_width.saturating_sub(used_w + status_w);
-
-            if pad > 0 {
-                spans.push(Span::styled(
-                    " ".repeat(pad),
-                    if has_bg { Style::default().bg(row_bg) } else { Style::default() },
-                ));
-            }
-
             if let Some((ch, color)) = status_str {
+                let pad = inner_width.saturating_sub(used_w + 2);
+                if pad > 0 {
+                    spans.push(Span::styled(
+                        " ".repeat(pad),
+                        if has_bg { Style::default().bg(row_bg) } else { Style::default() },
+                    ));
+                }
                 spans.push(Span::styled(
                     format!("{} ", ch),
                     if has_bg {
@@ -1756,6 +1764,15 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                         Style::default().fg(color)
                     },
                 ));
+            } else {
+                // No status — pad to fill the full row width
+                let pad = inner_width.saturating_sub(used_w);
+                if pad > 0 {
+                    spans.push(Span::styled(
+                        " ".repeat(pad),
+                        if has_bg { Style::default().bg(row_bg) } else { Style::default() },
+                    ));
+                }
             }
 
             lines.push(Line::from(spans));
