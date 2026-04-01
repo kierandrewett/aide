@@ -414,6 +414,25 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.follow_mode = true;
                     }
                 }
+                Action::Paste(text) => {
+                    if app.session_manager.active_session().is_some() {
+                        // Send bracketed paste: \x1b[200~ ... \x1b[201~
+                        // This tells the terminal/shell this is pasted text, not typed
+                        let _ = app.session_manager.write_input(b"\x1b[200~");
+
+                        // Chunk large pastes to avoid overwhelming the PTY
+                        let bytes = text.as_bytes();
+                        let chunk_size = 4096;
+                        for chunk in bytes.chunks(chunk_size) {
+                            let _ = app.session_manager.write_input(chunk);
+                        }
+
+                        let _ = app.session_manager.write_input(b"\x1b[201~");
+                        did_forward = true;
+                        app.last_input_time = Some(Instant::now());
+                        app.follow_mode = true;
+                    }
+                }
                 Action::EscapeKey => {
                     let size = terminal.size().unwrap_or_default();
                     if app.focus == app::FocusPanel::FileBrowser {

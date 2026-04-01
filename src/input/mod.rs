@@ -25,6 +25,8 @@ pub enum Action {
     ForwardChars(String),
     ForwardSpecial(String),
     ForwardCtrl(char),
+    /// Bracketed paste — large text that should be wrapped in paste brackets
+    Paste(String),
     EscapeKey,
     MouseClick(u16, u16),
     None,
@@ -56,9 +58,9 @@ pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
                 }
             }
             Ok(Event::Paste(text)) => {
-                // Bracketed paste — forward as raw chars
+                // Bracketed paste — send as paste action for proper handling
                 if !text.is_empty() {
-                    actions.push(Action::ForwardChars(text));
+                    actions.push(Action::Paste(text));
                 }
             }
             _ => break,
@@ -207,6 +209,8 @@ fn map_mouse(mouse: MouseEvent) -> Option<Action> {
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             Some(Action::MouseClick(mouse.column, mouse.row))
         }
+        // Mouse drag and release events are passed through to allow native
+        // terminal text selection to work (terminal emulators handle this)
         _ => None,
     }
 }
