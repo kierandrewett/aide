@@ -7,6 +7,8 @@ pub struct FileEntry {
     pub is_dir: bool,
     pub depth: usize,
     pub expanded: bool,
+    /// Git status: None = clean, Some('A') = added, Some('M') = modified, Some('D') = deleted, Some('?') = untracked
+    pub git_status: Option<char>,
 }
 
 pub struct FileBrowser {
@@ -41,6 +43,61 @@ impl FileBrowser {
         }
     }
 
+    /// Update git status indicators on all entries.
+    pub fn update_git_status(&mut self, git_status_output: &str) {
+        // Parse git status --short output to map filenames to statuses
+        let mut status_map = std::collections::HashMap::new();
+        for line in git_status_output.lines() {
+            if line.starts_with("##") || line.trim().is_empty() {
+                continue;
+            }
+            if line.len() < 4 {
+                continue;
+            }
+            let (idx, wt) = (
+                line.chars().next().unwrap_or(' '),
+                line.chars().nth(1).unwrap_or(' '),
+            );
+            let filename = &line[3..];
+
+            let status = match (idx, wt) {
+                ('?', '?') => '?',
+                ('A', _) | (_, 'A') => 'A',
+                ('D', _) | (_, 'D') => 'D',
+                ('M', _) | (_, 'M') => 'M',
+                ('R', _) => 'M', // treat rename as modified
+                _ => 'M',
+            };
+            // Handle renames: "old -> new"
+            let fname = if let Some(arrow) = filename.find(" -> ") {
+                &filename[arrow + 4..]
+            } else {
+                filename
+            };
+            status_map.insert(fname.to_string(), status);
+
+            // Also mark parent directories
+            let p = Path::new(fname);
+            let mut parent = p.parent();
+            while let Some(pp) = parent {
+                if pp.as_os_str().is_empty() {
+                    break;
+                }
+                let ps = pp.to_string_lossy().to_string();
+                status_map.entry(ps).or_insert(status);
+                parent = pp.parent();
+            }
+        }
+
+        for entry in &mut self.entries {
+            // Get relative path from root
+            if let Ok(rel) = entry.path.strip_prefix(&self.root) {
+                let rel_str = rel.to_string_lossy().to_string();
+                entry.git_status = status_map.get(&rel_str).copied();
+            }
+        }
+    }
+
     fn load_dir(&mut self, dir: &Path, depth: usize) {
         let mut entries: Vec<(String, PathBuf, bool)> = Vec::new();
 
@@ -68,13 +125,13 @@ impl FileBrowser {
         });
 
         for (name, path, is_dir) in entries {
-            let expanded = false;
             self.entries.push(FileEntry {
                 name,
                 path,
                 is_dir,
                 depth,
-                expanded,
+                expanded: false,
+                git_status: None,
             });
         }
     }
@@ -95,7 +152,7 @@ impl FileBrowser {
         if was_expanded {
             // Collapse: remove all children
             self.entries[self.selected].expanded = false;
-            let mut remove_start = self.selected + 1;
+            let remove_start = self.selected + 1;
             let mut remove_end = remove_start;
             while remove_end < self.entries.len() && self.entries[remove_end].depth > depth {
                 remove_end += 1;
@@ -135,11 +192,11 @@ impl FileBrowser {
                         is_dir,
                         depth: depth + 1,
                         expanded: false,
+                        git_status: None,
                     });
                 }
             }
 
-            // Insert children
             for (i, child) in children.into_iter().enumerate() {
                 self.entries.insert(insert_pos + i, child);
             }
@@ -160,5 +217,9 @@ impl FileBrowser {
 
     pub fn selected_path(&self) -> Option<&Path> {
         self.entries.get(self.selected).map(|e| e.path.as_path())
+    }
+
+    pub fn selected_entry(&self) -> Option<&FileEntry> {
+        self.entries.get(self.selected)
     }
 }

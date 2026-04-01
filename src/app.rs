@@ -53,10 +53,19 @@ pub struct App {
     pub tab_scroll_offset: usize,
     pub is_narrow: bool,
     pub file_browser: FileBrowser,
+    /// Currently viewed file path (None = no file open)
+    pub viewing_file: Option<String>,
+    /// Cached file content for viewer
+    pub file_content: String,
+    /// File viewer scroll offset
+    pub file_scroll: u16,
+    /// On narrow mode, whether to show file view or terminal
+    pub show_file_view: bool,
     // Click target areas
     pub tab_bar_area: Rect,
     pub output_area: Rect,
     pub git_panel_area: Rect,
+    pub file_browser_area: Rect,
     pub tab_click_zones: Vec<(u16, u16, usize)>,
 }
 
@@ -101,9 +110,14 @@ impl App {
             tab_scroll_offset: 0,
             is_narrow: false,
             file_browser: FileBrowser::new(),
+            viewing_file: None,
+            file_content: String::new(),
+            file_scroll: 0,
+            show_file_view: false,
             tab_bar_area: Rect::default(),
             output_area: Rect::default(),
             git_panel_area: Rect::default(),
+            file_browser_area: Rect::default(),
             tab_click_zones: Vec::new(),
         }
     }
@@ -328,6 +342,29 @@ impl App {
                 self.command_palette_selected - 1
             };
         }
+    }
+
+    /// Open a file for viewing.
+    pub fn open_file(&mut self, path: &str) {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                self.viewing_file = Some(path.to_string());
+                self.file_content = content;
+                self.file_scroll = 0;
+                self.show_file_view = true;
+            }
+            Err(_) => {
+                // Can't read file (binary or permission denied) — ignore
+            }
+        }
+    }
+
+    /// Close the file viewer.
+    pub fn close_file(&mut self) {
+        self.viewing_file = None;
+        self.file_content.clear();
+        self.file_scroll = 0;
+        self.show_file_view = false;
     }
 
     pub fn is_on_welcome(&self) -> bool {

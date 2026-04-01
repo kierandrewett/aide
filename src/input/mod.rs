@@ -12,6 +12,7 @@ pub enum Action {
     CloseInstance,
     TogglePanel,
     ToggleFileBrowser,
+    ToggleFileView,
     Exit,
     // Picker/dialog actions
     ScrollUp,
@@ -120,6 +121,11 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             modifiers: KeyModifiers::CONTROL,
             ..
         } => return Action::ToggleFileBrowser,
+        KeyEvent {
+            code: KeyCode::Char('f'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => return Action::ToggleFileView,
         KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers::CONTROL,

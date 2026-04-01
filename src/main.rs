@@ -278,6 +278,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 Action::CommandPalette => app.open_command_palette(),
                 Action::ToggleFileBrowser => {
                     app.show_file_browser = !app.show_file_browser;
+                    if app.show_file_browser {
+                        app.focus = app::FocusPanel::FileBrowser;
+                    } else {
+                        app.focus = app::FocusPanel::Output;
+                    }
+                    last_resize = (0, 0);
+                }
+                Action::ToggleFileView => {
+                    if app.viewing_file.is_some() {
+                        if app.is_narrow {
+                            app.show_file_view = !app.show_file_view;
+                        } else {
+                            app.close_file();
+                        }
+                    }
                     last_resize = (0, 0);
                 }
                 Action::CloseInstance => {
@@ -312,7 +327,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     last_resize = (0, 0);
                 }
                 Action::ForwardChars(chars) => {
-                    if app.session_manager.active_session().is_some() {
+                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
+                        // Don't forward typing to PTY when file browser focused
+                    } else if app.session_manager.active_session().is_some() {
                         let _ = app.session_manager.write_input(chars.as_bytes());
                         did_forward = true;
                         app.last_input_time = Some(Instant::now());
@@ -320,13 +337,70 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ForwardSpecial(key) => {
-                    // Map special key names to actual escape sequences
-                    let seq = special_key_sequence(&key);
-                    if app.session_manager.active_session().is_some() {
-                        let _ = app.session_manager.write_input(seq.as_bytes());
-                        did_forward = true;
-                        app.last_input_time = Some(Instant::now());
-                        app.follow_mode = true;
+                    // File browser keyboard navigation
+                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
+                        match key.as_str() {
+                            "Up" => {
+                                app.file_browser.move_up();
+                                let sel = app.file_browser.selected as u16;
+                                if sel < app.file_browser.scroll_offset {
+                                    app.file_browser.scroll_offset = sel;
+                                }
+                            }
+                            "Down" => {
+                                app.file_browser.move_down();
+                                let sel = app.file_browser.selected as u16;
+                                let visible = app.file_browser_area.height.saturating_sub(2);
+                                if sel >= app.file_browser.scroll_offset + visible {
+                                    app.file_browser.scroll_offset =
+                                        sel.saturating_sub(visible) + 1;
+                                }
+                            }
+                            "Enter" | "Right" => {
+                                if let Some(entry) = app.file_browser.selected_entry() {
+                                    if entry.is_dir {
+                                        app.file_browser.toggle_expand();
+                                        // Update git status after expand
+                                        let status = app.git_status.clone();
+                                        app.file_browser.update_git_status(&status);
+                                    } else {
+                                        let path = entry.path.to_string_lossy().to_string();
+                                        app.open_file(&path);
+                                        app.focus = app::FocusPanel::Output;
+                                        last_resize = (0, 0);
+                                    }
+                                }
+                            }
+                            "Left" => {
+                                // Collapse current directory or go to parent
+                                if let Some(entry) = app.file_browser.selected_entry() {
+                                    if entry.is_dir && entry.expanded {
+                                        app.file_browser.toggle_expand();
+                                    } else if entry.depth > 0 {
+                                        // Navigate to parent directory
+                                        let depth = entry.depth;
+                                        while app.file_browser.selected > 0 {
+                                            app.file_browser.selected -= 1;
+                                            if let Some(e) = app.file_browser.entries.get(app.file_browser.selected) {
+                                                if e.depth < depth && e.is_dir {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        // Map special key names to actual escape sequences
+                        let seq = special_key_sequence(&key);
+                        if app.session_manager.active_session().is_some() {
+                            let _ = app.session_manager.write_input(seq.as_bytes());
+                            did_forward = true;
+                            app.last_input_time = Some(Instant::now());
+                            app.follow_mode = true;
+                        }
                     }
                 }
                 Action::ForwardCtrl(c) => {
@@ -341,7 +415,16 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::EscapeKey => {
                     let size = terminal.size().unwrap_or_default();
-                    if app.show_right_panel && size.width < 100 {
+                    if app.focus == app::FocusPanel::FileBrowser {
+                        if app.is_narrow {
+                            app.show_file_browser = false;
+                        }
+                        app.focus = app::FocusPanel::Output;
+                        last_resize = (0, 0);
+                    } else if app.viewing_file.is_some() {
+                        app.close_file();
+                        last_resize = (0, 0);
+                    } else if app.show_right_panel && size.width < 100 {
                         app.show_right_panel = false;
                         app.focus = app::FocusPanel::Output;
                         last_resize = (0, 0);
@@ -352,16 +435,22 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ScrollUp => {
-                    // On narrow (mobile), reverse scroll direction
-                    let (up_delta, down_delta): (i16, i16) = if app.is_narrow {
-                        (-1, 1) // reversed for natural touch
-                    } else {
-                        (1, -1) // standard desktop
-                    };
-                    let scroll_git =
-                        app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
-                    if scroll_git {
-                        if up_delta > 0 {
+                    let reversed = app.is_narrow;
+                    let delta: i16 = if reversed { -1 } else { 1 };
+
+                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
+                        if delta > 0 {
+                            app.file_browser.move_up();
+                        } else {
+                            app.file_browser.move_down();
+                        }
+                        // Keep selected in view
+                        let sel = app.file_browser.selected as u16;
+                        if sel < app.file_browser.scroll_offset {
+                            app.file_browser.scroll_offset = sel;
+                        }
+                    } else if app.focus == app::FocusPanel::GitPanel && app.show_right_panel {
+                        if delta > 0 {
                             app.git_status_scroll = app.git_status_scroll.saturating_add(1);
                             app.git_log_scroll = app.git_log_scroll.saturating_add(1);
                         } else {
@@ -374,7 +463,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             refresh_git_log(&mut app);
                         }
                     } else {
-                        if up_delta > 0 {
+                        if delta > 0 {
                             app.follow_mode = false;
                             app.scroll_offset = app.scroll_offset.saturating_add(1);
                         } else {
@@ -386,15 +475,22 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::ScrollDown => {
-                    let (up_delta, down_delta): (i16, i16) = if app.is_narrow {
-                        (-1, 1)
-                    } else {
-                        (1, -1)
-                    };
-                    let scroll_git =
-                        app.focus == app::FocusPanel::GitPanel && app.show_right_panel;
-                    if scroll_git {
-                        if down_delta > 0 {
+                    let reversed = app.is_narrow;
+                    let delta: i16 = if reversed { 1 } else { -1 };
+
+                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
+                        if delta > 0 {
+                            app.file_browser.move_down();
+                        } else {
+                            app.file_browser.move_up();
+                        }
+                        let sel = app.file_browser.selected as u16;
+                        let visible = app.file_browser_area.height.saturating_sub(2);
+                        if sel >= app.file_browser.scroll_offset + visible {
+                            app.file_browser.scroll_offset = sel.saturating_sub(visible) + 1;
+                        }
+                    } else if app.focus == app::FocusPanel::GitPanel && app.show_right_panel {
+                        if delta < 0 {
                             app.git_status_scroll = app.git_status_scroll.saturating_add(1);
                             app.git_log_scroll = app.git_log_scroll.saturating_add(1);
                         } else {
@@ -402,7 +498,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             app.git_log_scroll = app.git_log_scroll.saturating_sub(1);
                         }
                     } else {
-                        if down_delta > 0 {
+                        if delta < 0 {
                             app.follow_mode = false;
                             app.scroll_offset = app.scroll_offset.saturating_add(1);
                         } else {
@@ -442,6 +538,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                 }
                                 break;
                             }
+                        }
+                    } else if app.file_browser_area.width > 0
+                        && my >= app.file_browser_area.y
+                        && my < app.file_browser_area.y + app.file_browser_area.height
+                        && mx >= app.file_browser_area.x
+                        && mx < app.file_browser_area.x + app.file_browser_area.width
+                    {
+                        app.focus = app::FocusPanel::FileBrowser;
+                        // Click to select entry
+                        let click_row = (my - app.file_browser_area.y).saturating_sub(1) as usize;
+                        let idx = click_row + app.file_browser.scroll_offset as usize;
+                        if idx < app.file_browser.entries.len() {
+                            app.file_browser.selected = idx;
                         }
                     } else if app.output_area.width > 0
                         && my >= app.output_area.y
@@ -532,7 +641,9 @@ fn refresh_git_status(app: &mut App) {
         let dir = session.directory.clone();
         if !dir.is_empty() {
             if let Ok(status) = git::status_short(&dir) {
-                app.git_status = status;
+                app.git_status = status.clone();
+                // Update file browser git indicators
+                app.file_browser.update_git_status(&status);
             }
             if let Ok(branch) = git::current_branch(&dir) {
                 app.git_branch = branch;

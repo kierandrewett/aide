@@ -98,7 +98,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
-    let tab_height: u16 = if is_narrow { 2 } else { 3 };
+    let tab_height: u16 = 2;
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -108,7 +108,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let content_area = main_chunks[0];
     let status_area = main_chunks[1];
 
-    // Always show tab bar + content; welcome is just the content of a special tab
     let tab_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(tab_height), Constraint::Min(1)])
@@ -119,41 +118,98 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let body_area = tab_chunks[1];
 
     if app.is_on_welcome() {
+        app.output_area = Rect::default();
+        app.git_panel_area = Rect::default();
+        app.file_browser_area = Rect::default();
         draw_splash(frame, app, body_area);
         draw_status_bar(frame, app, status_area);
-        if app.show_picker {
-            draw_picker(frame, app, size);
+        if app.show_picker || app.show_command_palette {
+            draw_command_palette(frame, app, size);
         }
         return;
     }
 
-    if app.show_right_panel && is_narrow {
+    // Calculate layout with optional file browser on left
+    let file_browser_width: u16 = if app.show_file_browser && !is_narrow {
+        (size.width / 5).max(20).min(40)
+    } else {
+        0
+    };
+
+    let main_body = if file_browser_width > 0 {
+        let h_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(file_browser_width),
+                Constraint::Min(1),
+            ])
+            .split(body_area);
+        app.file_browser_area = h_chunks[0];
+        draw_file_browser(frame, app, h_chunks[0], is_narrow);
+        h_chunks[1]
+    } else {
+        app.file_browser_area = Rect::default();
+        body_area
+    };
+
+    // File view mode: if a file is open, split between file content and terminal
+    if app.viewing_file.is_some() && !is_narrow {
+        let h_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_body);
+
+        draw_file_viewer(frame, app, h_chunks[0], is_narrow);
+        app.output_area = h_chunks[1];
+        app.git_panel_area = Rect::default();
+        draw_claude_output(frame, app, h_chunks[1], is_narrow);
+    } else if app.viewing_file.is_some() && is_narrow {
+        // Mobile: show file content full-width (toggle with ctrl+f)
+        if app.show_file_view {
+            draw_file_viewer(frame, app, main_body, is_narrow);
+            app.output_area = Rect::default();
+            app.git_panel_area = Rect::default();
+        } else {
+            app.output_area = main_body;
+            app.git_panel_area = Rect::default();
+            draw_claude_output(frame, app, main_body, is_narrow);
+        }
+    } else if app.show_right_panel && is_narrow {
         app.output_area = Rect::default();
-        app.git_panel_area = body_area;
-        draw_right_panel(frame, app, body_area, is_narrow);
+        app.git_panel_area = main_body;
+        draw_right_panel(frame, app, main_body, is_narrow);
     } else if app.show_right_panel {
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(body_area);
+            .split(main_body);
 
         app.output_area = h_chunks[0];
         app.git_panel_area = h_chunks[1];
         draw_claude_output(frame, app, h_chunks[0], is_narrow);
         draw_right_panel(frame, app, h_chunks[1], is_narrow);
     } else {
-        app.output_area = body_area;
+        app.output_area = main_body;
         app.git_panel_area = Rect::default();
-        draw_claude_output(frame, app, body_area, is_narrow);
+        draw_claude_output(frame, app, main_body, is_narrow);
     }
 
     draw_status_bar(frame, app, status_area);
 
+    // Overlays
     if app.show_close_confirm {
         draw_confirm_dialog(frame, size);
     }
-    if app.show_picker {
-        draw_picker(frame, app, size);
+    if app.show_picker || app.show_command_palette {
+        draw_command_palette(frame, app, size);
+    }
+
+    // File browser overlay on narrow mode
+    if app.show_file_browser && is_narrow {
+        let overlay_w = (size.width * 3 / 4).min(size.width);
+        let overlay_area = Rect::new(0, tab_height, overlay_w, body_area.height);
+        app.file_browser_area = overlay_area;
+        draw_file_browser(frame, app, overlay_area, is_narrow);
     }
 }
 
@@ -1141,81 +1197,307 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, dialog_area);
 }
 
-fn draw_picker(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
     let dialog_width = 60u16.min(area.width.saturating_sub(4));
     let dialog_height = 20u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(dialog_width)) / 2;
-    let y = (area.height.saturating_sub(dialog_height)) / 2;
+    let y = area.height.min(3); // Position near top like VS Code
     let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
 
-    // Clear the entire area behind the dialog with a solid background
+    // Clear background
     let clear_lines: Vec<Line> = (0..dialog_height)
         .map(|_| {
             Line::from(Span::styled(
                 " ".repeat(dialog_width as usize),
-                Style::default().bg(Color::Black),
+                Style::default().bg(Color::Rgb(30, 30, 30)),
             ))
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(clear_lines).style(Style::default().bg(Color::Black)),
+        Paragraph::new(clear_lines).style(Style::default().bg(Color::Rgb(30, 30, 30))),
         dialog_area,
     );
 
     let inner_height = dialog_height.saturating_sub(2) as usize;
-    let mut lines = vec![
-        Line::from(Span::styled(
-            format!(" Filter: {}_ ", app.picker_filter),
-            Style::default().fg(Color::Cyan),
-        )),
-        Line::from(""),
-    ];
 
-    let filtered = app.filtered_projects();
-    let visible_slots = inner_height.saturating_sub(2);
-    let scroll_start = if app.picker_selected >= visible_slots {
-        app.picker_selected - visible_slots + 1
+    // Use the command palette if it's open, otherwise use the picker (legacy)
+    let (filter, selected, items): (&str, usize, Vec<(String, Option<&str>)>) =
+        if app.show_command_palette {
+            let palette_items = app.command_palette_items();
+            let items: Vec<(String, Option<&str>)> = palette_items
+                .iter()
+                .map(|i| {
+                    let kind = match &i.kind {
+                        crate::app::PaletteKind::OpenFolder => Some("folder"),
+                        crate::app::PaletteKind::OpenProject(_) => Some("project"),
+                        crate::app::PaletteKind::NewTerminal => Some("terminal"),
+                        crate::app::PaletteKind::ToggleGit => Some("panel"),
+                        crate::app::PaletteKind::ToggleFileBrowser => Some("panel"),
+                    };
+                    (i.label.clone(), kind)
+                })
+                .collect();
+            (
+                &app.command_palette_filter,
+                app.command_palette_selected,
+                items,
+            )
+        } else {
+            let filtered = app.filtered_projects();
+            let items: Vec<(String, Option<&str>)> =
+                filtered.iter().map(|p| (p.clone(), Some("project"))).collect();
+            (&app.picker_filter, app.picker_selected, items)
+        };
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled(" > ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            filter,
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            "_",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::SLOW_BLINK),
+        ),
+    ])];
+
+    let visible_slots = inner_height.saturating_sub(1);
+    let scroll_start = if selected >= visible_slots {
+        selected - visible_slots + 1
     } else {
         0
     };
 
-    for (i, project) in filtered
+    for (i, (label, kind)) in items
         .iter()
         .enumerate()
         .skip(scroll_start)
         .take(visible_slots)
     {
-        let style = if i == app.picker_selected {
+        let is_sel = i == selected;
+        let bg = if is_sel {
+            Color::Rgb(60, 60, 80)
+        } else {
+            Color::Rgb(30, 30, 30)
+        };
+
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            if is_sel { " > " } else { "   " },
+            Style::default().fg(Color::Cyan).bg(bg),
+        ));
+        spans.push(Span::styled(
+            label.clone(),
             Style::default()
-                .fg(Color::White)
-                .bg(Color::Blue)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White).bg(Color::Black)
-        };
-        let prefix = if i == app.picker_selected {
-            " ▸ "
-        } else {
-            "   "
-        };
-        lines.push(Line::from(Span::styled(
-            format!("{}{}", prefix, project),
-            style,
-        )));
+                .fg(if is_sel { Color::White } else { Color::Rgb(200, 200, 200) })
+                .bg(bg)
+                .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+        ));
+
+        if let Some(k) = kind {
+            spans.push(Span::styled(
+                format!("  {}", k),
+                Style::default().fg(Color::DarkGray).bg(bg),
+            ));
+        }
+
+        // Fill rest of line with background
+        let line_w: usize = spans.iter().map(|s| s.content.width()).sum();
+        let pad = (dialog_width.saturating_sub(2) as usize).saturating_sub(line_w);
+        if pad > 0 {
+            spans.push(Span::styled(
+                " ".repeat(pad),
+                Style::default().bg(bg),
+            ));
+        }
+
+        lines.push(Line::from(spans));
     }
+
+    let title = if app.show_command_palette {
+        " Command Palette "
+    } else {
+        " Open Folder "
+    };
 
     let paragraph = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(FOCUSED_BORDER))
+            .border_style(Style::default().fg(Color::Rgb(80, 80, 120)))
             .title(Span::styled(
-                " Select Project ",
+                title,
                 Style::default()
-                    .fg(FOCUSED_BORDER)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black).fg(Color::White)),
+            .style(Style::default().bg(Color::Rgb(30, 30, 30)).fg(Color::White)),
     );
 
     frame.render_widget(paragraph, dialog_area);
+}
+
+fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+    let is_focused = app.focus == FocusPanel::FileBrowser;
+
+    let block = if is_narrow {
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 60)))
+            .style(Style::default().bg(Color::Rgb(25, 25, 25)))
+    } else {
+        focused_block(" Explorer ", is_focused)
+    };
+
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::new();
+
+    if app.file_browser.entries.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " No files",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        let scroll = app.file_browser.scroll_offset as usize;
+
+        for (i, entry) in app
+            .file_browser
+            .entries
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(inner_height)
+        {
+            let is_sel = i == app.file_browser.selected;
+            let indent = "  ".repeat(entry.depth);
+            let icon = if entry.is_dir {
+                if entry.expanded {
+                    "▾ "
+                } else {
+                    "▸ "
+                }
+            } else {
+                "  "
+            };
+
+            let bg = if is_sel {
+                Color::Rgb(60, 60, 80)
+            } else {
+                Color::Rgb(25, 25, 25)
+            };
+
+            let name_color = match entry.git_status {
+                Some('A') => Color::Green,
+                Some('M') => Color::Yellow,
+                Some('D') => Color::Red,
+                Some('?') => Color::DarkGray,
+                _ => {
+                    if entry.is_dir {
+                        Color::Rgb(200, 200, 200)
+                    } else {
+                        Color::Rgb(180, 180, 180)
+                    }
+                }
+            };
+
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {}{}", indent, icon),
+                    Style::default().fg(Color::Rgb(100, 100, 100)).bg(bg),
+                ),
+                Span::styled(
+                    &entry.name,
+                    Style::default()
+                        .fg(name_color)
+                        .bg(bg)
+                        .add_modifier(if entry.is_dir {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+            ];
+
+            // Git status indicator on the right
+            if let Some(status) = entry.git_status {
+                let (ch, color) = match status {
+                    'A' => ("A", Color::Green),
+                    'M' => ("M", Color::Yellow),
+                    'D' => ("D", Color::Red),
+                    '?' => ("U", Color::DarkGray),
+                    _ => ("", Color::DarkGray),
+                };
+                if !ch.is_empty() {
+                    spans.push(Span::styled(
+                        format!(" {}", ch),
+                        Style::default().fg(color).bg(bg),
+                    ));
+                }
+            }
+
+            lines.push(Line::from(spans));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, area);
+
+    // Scrollbar for file browser
+    let total = app.file_browser.entries.len() as u16;
+    let visible = inner_height as u16;
+    let max_scroll = total.saturating_sub(visible);
+    if max_scroll > 0 {
+        render_scrollbar(frame, area, is_narrow, app.file_browser.scroll_offset, max_scroll);
+    }
+}
+
+fn draw_file_viewer(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+    let title = if let Some(ref path) = app.viewing_file {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        format!(" {} ", name)
+    } else {
+        " File ".to_string()
+    };
+
+    let block = if is_narrow {
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 60)))
+            .title(Span::styled(
+                &title,
+                Style::default().fg(Color::Cyan),
+            ))
+    } else {
+        focused_block(&title, app.focus == FocusPanel::Output)
+    };
+
+    let inner_height = area.height.saturating_sub(2);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, line) in app.file_content.lines().enumerate() {
+        let line_num = format!("{:>4} ", i + 1);
+        lines.push(Line::from(vec![
+            Span::styled(
+                line_num,
+                Style::default().fg(Color::Rgb(80, 80, 80)),
+            ),
+            Span::styled(line.to_string(), Style::default().fg(Color::Rgb(200, 200, 200))),
+        ]));
+    }
+
+    let total = lines.len() as u16;
+    let max_scroll = total.saturating_sub(inner_height);
+    let scroll = app.file_scroll.min(max_scroll);
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .scroll((scroll, 0));
+
+    frame.render_widget(paragraph, area);
+
+    render_scrollbar(frame, area, is_narrow, scroll, max_scroll);
 }
