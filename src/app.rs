@@ -198,47 +198,24 @@ impl App {
     }
 
     pub fn open_picker(&mut self) {
-        self.available_projects = discover_projects(&self.projects_dir);
-        self.show_picker = true;
-        self.picker_filter.clear();
-        self.picker_selected = 0;
+        // Redirect picker to command palette
+        self.open_command_palette();
     }
 
     pub fn close_picker(&mut self) {
-        self.show_picker = false;
-        self.picker_filter.clear();
-        self.picker_selected = 0;
+        self.close_command_palette();
     }
 
     pub fn picker_select_confirm(&mut self) -> Result<()> {
-        let filtered = self.filtered_projects();
-        if let Some(project) = filtered.get(self.picker_selected).cloned() {
-            let was_on_welcome = self.is_on_welcome();
-            self.close_picker();
-            self.create_session_for_project(&project)?;
-            if was_on_welcome {
-                self.show_welcome = false;
-            }
-        }
-        Ok(())
+        self.command_palette_confirm()
     }
 
     pub fn picker_move_down(&mut self) {
-        let count = self.filtered_projects().len();
-        if count > 0 {
-            self.picker_selected = (self.picker_selected + 1) % count;
-        }
+        self.command_palette_move_down();
     }
 
     pub fn picker_move_up(&mut self) {
-        let count = self.filtered_projects().len();
-        if count > 0 {
-            self.picker_selected = if self.picker_selected == 0 {
-                count - 1
-            } else {
-                self.picker_selected - 1
-            };
-        }
+        self.command_palette_move_up();
     }
 
     // Command palette
@@ -251,6 +228,7 @@ impl App {
 
     pub fn close_command_palette(&mut self) {
         self.show_command_palette = false;
+        self.show_picker = false;
         self.command_palette_filter.clear();
         self.command_palette_selected = 0;
     }
