@@ -9,14 +9,17 @@ pub enum Action {
     PrevTab,
     NewInstance,
     CommandPalette,
+    CommandPaletteReverse,
     CloseInstance,
     TogglePanel,
     ToggleFileBrowser,
     ToggleFileView,
     Exit,
     // Picker/dialog actions
-    ScrollUp,
-    ScrollDown,
+    ScrollUp(u16, u16),   // (x, y) mouse position
+    ScrollDown(u16, u16), // (x, y) mouse position
+    ScrollToTop,
+    ScrollToBottom,
     Confirm,
     Cancel,
     PickerChar(char),
@@ -27,8 +30,11 @@ pub enum Action {
     ForwardCtrl(char),
     /// Bracketed paste — large text that should be wrapped in paste brackets
     Paste(String),
+    CopySelection,
     EscapeKey,
     MouseClick(u16, u16),
+    MouseDrag(u16, u16),
+    MouseRelease(u16, u16),
     None,
 }
 
@@ -105,6 +111,13 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         } => return Action::NewInstance,
         KeyEvent {
             code: KeyCode::Char('p'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL) && modifiers.contains(KeyModifiers::SHIFT) => {
+            return Action::CommandPaletteReverse
+        }
+        KeyEvent {
+            code: KeyCode::Char('p'),
             modifiers: KeyModifiers::CONTROL,
             ..
         } => return Action::CommandPalette,
@@ -156,11 +169,11 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             } => Action::Cancel,
             KeyEvent {
                 code: KeyCode::Up, ..
-            } => Action::ScrollUp,
+            } => Action::ScrollUp(0, 0),
             KeyEvent {
                 code: KeyCode::Down,
                 ..
-            } => Action::ScrollDown,
+            } => Action::ScrollDown(0, 0),
             KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
@@ -176,6 +189,12 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
 
     // Forward to PTY
     match (&key.code, key.modifiers) {
+        // Ctrl+Shift+C = copy selection (crossterm may report 'c' or 'C')
+        (KeyCode::Char('c' | 'C'), mods)
+            if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) =>
+        {
+            Action::CopySelection
+        }
         (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => {
             Action::ForwardCtrl(*c)
         }
@@ -193,8 +212,14 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         (KeyCode::Right, _) => Action::ForwardSpecial("Right".into()),
         (KeyCode::Home, _) => Action::ForwardSpecial("Home".into()),
         (KeyCode::End, _) => Action::ForwardSpecial("End".into()),
-        (KeyCode::PageUp, _) => Action::ScrollUp,
-        (KeyCode::PageDown, _) => Action::ScrollDown,
+        (KeyCode::PageUp, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ScrollToTop
+        }
+        (KeyCode::PageDown, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ScrollToBottom
+        }
+        (KeyCode::PageUp, _) => Action::ScrollUp(0, 0),
+        (KeyCode::PageDown, _) => Action::ScrollDown(0, 0),
         (KeyCode::Delete, _) => Action::ForwardSpecial("DC".into()),
         (KeyCode::Insert, _) => Action::ForwardSpecial("IC".into()),
         (KeyCode::F(n), _) => Action::ForwardSpecial(format!("F{}", n)),
@@ -204,13 +229,17 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
 
 fn map_mouse(mouse: MouseEvent) -> Option<Action> {
     match mouse.kind {
-        MouseEventKind::ScrollUp => Some(Action::ScrollUp),
-        MouseEventKind::ScrollDown => Some(Action::ScrollDown),
+        MouseEventKind::ScrollUp => Some(Action::ScrollUp(mouse.column, mouse.row)),
+        MouseEventKind::ScrollDown => Some(Action::ScrollDown(mouse.column, mouse.row)),
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             Some(Action::MouseClick(mouse.column, mouse.row))
         }
-        // Mouse drag and release events are passed through to allow native
-        // terminal text selection to work (terminal emulators handle this)
+        MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+            Some(Action::MouseDrag(mouse.column, mouse.row))
+        }
+        MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+            Some(Action::MouseRelease(mouse.column, mouse.row))
+        }
         _ => None,
     }
 }

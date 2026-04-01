@@ -36,6 +36,7 @@ fn main() -> Result<()> {
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?; // Clear any stale content from alternate screen
 
     let result = run_app(&mut terminal);
 
@@ -96,9 +97,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
     let size = terminal.size()?;
     app.show_right_panel = size.width >= 100;
+    app.show_file_browser = size.width >= 120;
     app.is_narrow = size.width < 100;
 
-    let tick_rate = Duration::from_millis(16);
+    let tick_rate = Duration::from_millis(33); // ~30fps
     let mut last_git_status_refresh = Instant::now();
     let mut last_git_log_refresh = Instant::now();
     let mut last_output_refresh = Instant::now();
@@ -106,14 +108,23 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
     let git_status_interval = Duration::from_secs(2);
     let git_log_interval = Duration::from_secs(3);
-    let output_interval = Duration::from_millis(16);
+    let output_interval_active = Duration::from_millis(33);
+    let output_interval_idle = Duration::from_millis(200);
     let mut last_bg_check = Instant::now();
     let bg_check_interval = Duration::from_secs(2);
+    let mut last_full_repaint = Instant::now();
+    let mut frame_count: u32 = 0;
 
     loop {
+        frame_count = frame_count.wrapping_add(1);
+        if frame_count <= 3 || last_full_repaint.elapsed() >= Duration::from_secs(5) {
+            terminal.swap_buffers();
+            last_full_repaint = Instant::now();
+        }
+
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
-        // Resize PTY to match our viewport if changed
+        // Resize PTY and vt100 parser to match our viewport if changed
         if (app.output_width, app.output_height) != last_resize
             && app.output_width > 0
             && app.output_height > 0
@@ -121,6 +132,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             let _ = app
                 .session_manager
                 .resize_active(app.output_width, app.output_height);
+            if let Some(parser) = &mut app.pty_parser {
+                parser
+                    .screen_mut()
+                    .set_size(app.output_height, app.output_width);
+            }
             last_resize = (app.output_width, app.output_height);
         }
 
@@ -128,13 +144,19 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         let current_size = terminal.size().unwrap_or_default();
         app.is_narrow = current_size.width < 100;
 
-        // Auto-show git panel on wide screens when viewing a session
-        if current_size.width >= 100 && !app.is_on_welcome() && !app.show_right_panel {
-            app.show_right_panel = true;
-            last_resize = (0, 0);
-        }
-
         let now = Instant::now();
+
+        // Adaptive output refresh rate: faster when typing, slower when idle
+        let is_active = app
+            .last_input_time
+            .map(|t| t.elapsed().as_millis() < 2000)
+            .unwrap_or(false);
+        let output_interval = if is_active {
+            output_interval_active
+        } else {
+            output_interval_idle
+        };
+
         if now.duration_since(last_output_refresh) >= output_interval {
             refresh_output(&mut app);
             last_output_refresh = now;
@@ -160,12 +182,32 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         let mut did_forward = false;
 
         for action in actions {
+            // Clear error message on any user action
+            if !matches!(action, Action::None) {
+                app.error_message = None;
+                // Clear text selection on non-mouse, non-escape, non-copy actions
+                if !matches!(
+                    action,
+                    Action::MouseClick(..)
+                        | Action::MouseDrag(..)
+                        | Action::MouseRelease(..)
+                        | Action::ScrollUp(..)
+                        | Action::ScrollDown(..)
+                        | Action::EscapeKey
+                        | Action::CopySelection
+                ) {
+                    app.selection = None;
+                }
+            }
+
             if app.show_close_confirm {
                 match action {
                     Action::PickerChar('y') | Action::PickerChar('Y') => {
                         app.show_close_confirm = false;
                         let idx = app.session_manager.active_index;
-                        app.session_manager.close_session(idx)?;
+                        if let Err(e) = app.session_manager.close_session(idx) {
+                            app.error_message = Some(format!("Failed to close session: {}", e));
+                        }
                         if app.session_manager.sessions.is_empty() {
                             app.should_quit = true;
                         } else {
@@ -184,7 +226,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             if app.show_command_palette {
                 match action {
                     Action::Confirm => {
-                        app.command_palette_confirm()?;
+                        app.command_palette_confirm();
                         last_resize = (0, 0);
                     }
                     Action::Cancel => app.close_command_palette(),
@@ -196,8 +238,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.command_palette_filter.pop();
                         app.command_palette_selected = 0;
                     }
-                    Action::ScrollDown | Action::NextTab => app.command_palette_move_down(),
-                    Action::ScrollUp | Action::PrevTab => app.command_palette_move_up(),
+                    Action::ScrollDown(..) | Action::NextTab | Action::CommandPalette => {
+                        app.command_palette_move_down();
+                    }
+                    Action::ScrollUp(..) | Action::PrevTab | Action::CommandPaletteReverse => {
+                        app.command_palette_move_up();
+                    }
                     Action::Exit => app.close_command_palette(),
                     _ => {}
                 }
@@ -259,23 +305,37 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     app.show_welcome = true;
                     app.session_manager.active_index = app.session_manager.sessions.len();
                 }
-                Action::CommandPalette => app.open_command_palette(),
-                Action::ToggleFileBrowser => {
-                    app.show_file_browser = !app.show_file_browser;
-                    if app.show_file_browser {
-                        app.focus = app::FocusPanel::FileBrowser;
+                Action::CommandPalette => {
+                    if app.show_command_palette {
+                        app.command_palette_move_down();
                     } else {
+                        app.open_command_palette();
+                    }
+                }
+                Action::CommandPaletteReverse => {
+                    if app.show_command_palette {
+                        app.command_palette_move_up();
+                    } else {
+                        app.open_command_palette();
+                    }
+                }
+                Action::ToggleFileBrowser => {
+                    if app.show_file_browser {
+                        // Closing: hide file browser and file viewer
+                        app.show_file_browser = false;
+                        app.close_file();
                         app.focus = app::FocusPanel::Output;
+                    } else {
+                        // Opening: show file browser, and file viewer if a file is open
+                        app.show_file_browser = true;
+                        app.focus = app::FocusPanel::FileBrowser;
                     }
                     last_resize = (0, 0);
                 }
                 Action::ToggleFileView => {
                     if app.viewing_file.is_some() {
-                        if app.is_narrow {
-                            app.show_file_view = !app.show_file_view;
-                        } else {
-                            app.close_file();
-                        }
+                        app.close_file();
+                        app.focus = app::FocusPanel::Output;
                     }
                     last_resize = (0, 0);
                 }
@@ -297,22 +357,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::TogglePanel => {
-                    if app.show_right_panel && app.focus == app::FocusPanel::GitPanel {
-                        app.show_right_panel = false;
-                        app.focus = app::FocusPanel::Output;
-                    } else if app.show_right_panel {
-                        app.focus = app::FocusPanel::GitPanel;
+                    app.show_right_panel = !app.show_right_panel;
+                    if app.show_right_panel {
+                        app.focus = app::FocusPanel::GitStatus;
                     } else {
-                        app.show_right_panel = true;
-                        app.focus = app::FocusPanel::GitPanel;
+                        app.focus = app::FocusPanel::Output;
                     }
                     app.git_status_scroll = 0;
                     app.git_log_scroll = 0;
                     last_resize = (0, 0);
                 }
                 Action::ForwardChars(chars) => {
-                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
-                        // Don't forward typing to PTY when file browser focused
+                    if app.focus == app::FocusPanel::FileBrowser
+                        || app.focus == app::FocusPanel::FileViewer
+                    {
+                        // Don't forward typing to PTY when non-terminal panel focused
                     } else if app.session_manager.active_session().is_some() {
                         let _ = app.session_manager.write_input(chars.as_bytes());
                         did_forward = true;
@@ -350,7 +409,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                     } else {
                                         let path = entry.path.to_string_lossy().to_string();
                                         app.open_file(&path);
-                                        app.focus = app::FocusPanel::Output;
+                                        app.focus = app::FocusPanel::FileViewer;
                                         last_resize = (0, 0);
                                     }
                                 }
@@ -373,6 +432,27 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                         }
                                     }
                                 }
+                            }
+                            _ => {}
+                        }
+                    } else if app.focus == app::FocusPanel::FileViewer {
+                        let total = app.file_highlighted.len().max(
+                            app.file_content.lines().count(),
+                        ) as u16;
+                        let visible = app.file_viewer_area.height.saturating_sub(2);
+                        let max_v = total.saturating_sub(visible);
+                        match key.as_str() {
+                            "Left" => {
+                                app.file_scroll_h = app.file_scroll_h.saturating_sub(4);
+                            }
+                            "Right" => {
+                                app.file_scroll_h = app.file_scroll_h.saturating_add(4);
+                            }
+                            "Up" => {
+                                app.file_scroll = app.file_scroll.saturating_sub(1);
+                            }
+                            "Down" => {
+                                app.file_scroll = app.file_scroll.saturating_add(1).min(max_v);
                             }
                             _ => {}
                         }
@@ -417,59 +497,90 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::EscapeKey => {
-                    let size = terminal.size().unwrap_or_default();
-                    if app.focus == app::FocusPanel::FileBrowser {
+                    // If there's an active selection, Esc clears it
+                    if app.selection.is_some() {
+                        app.selection = None;
+                    } else if app.focus == app::FocusPanel::Output {
+                        if app.session_manager.active_session().is_some() {
+                            let _ = app.session_manager.write_input(b"\x1b");
+                            did_forward = true;
+                            app.last_input_time = Some(Instant::now());
+                        }
+                    } else if app.focus == app::FocusPanel::FileBrowser {
                         if app.is_narrow {
                             app.show_file_browser = false;
                         }
                         app.focus = app::FocusPanel::Output;
                         last_resize = (0, 0);
-                    } else if app.viewing_file.is_some() {
+                    } else if app.focus == app::FocusPanel::FileViewer {
                         app.close_file();
-                        last_resize = (0, 0);
-                    } else if app.show_right_panel && size.width < 100 {
-                        app.show_right_panel = false;
                         app.focus = app::FocusPanel::Output;
                         last_resize = (0, 0);
-                    } else if app.session_manager.active_session().is_some() {
-                        let _ = app.session_manager.write_input(b"\x1b");
-                        did_forward = true;
-                        app.last_input_time = Some(Instant::now());
+                    } else if matches!(app.focus, app::FocusPanel::GitStatus | app::FocusPanel::GitLog) {
+                        let size = terminal.size().unwrap_or_default();
+                        if size.width < 100 {
+                            app.show_right_panel = false;
+                        }
+                        app.focus = app::FocusPanel::Output;
+                        last_resize = (0, 0);
                     }
                 }
-                Action::ScrollUp => {
-                    let reversed = app.is_narrow;
-                    let delta: i16 = if reversed { -1 } else { 1 };
+                Action::ScrollUp(mx, my) => {
+                    let target = scroll_target(&app, mx, my);
+                    match target {
+                        ScrollPanel::FileBrowser => {
+                            app.file_browser.scroll_offset =
+                                app.file_browser.scroll_offset.saturating_sub(1);
+                        }
+                        ScrollPanel::FileViewer => {
+                            app.file_scroll = app.file_scroll.saturating_sub(1);
+                        }
 
-                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
-                        if delta > 0 {
-                            app.file_browser.move_up();
-                        } else {
-                            app.file_browser.move_down();
-                        }
-                        // Keep selected in view
-                        let sel = app.file_browser.selected as u16;
-                        if sel < app.file_browser.scroll_offset {
-                            app.file_browser.scroll_offset = sel;
-                        }
-                    } else if app.focus == app::FocusPanel::GitPanel && app.show_right_panel {
-                        if delta > 0 {
-                            app.git_status_scroll = app.git_status_scroll.saturating_add(1);
-                            app.git_log_scroll = app.git_log_scroll.saturating_add(1);
-                        } else {
+                        ScrollPanel::GitStatus => {
                             app.git_status_scroll = app.git_status_scroll.saturating_sub(1);
+                        }
+                        ScrollPanel::GitLog => {
                             app.git_log_scroll = app.git_log_scroll.saturating_sub(1);
                         }
-                        let log_lines = app.git_log.lines().count() as u16;
-                        if app.git_log_has_more && app.git_log_scroll + 20 >= log_lines {
-                            app.git_log_limit += 200;
-                            refresh_git_log(&mut app);
-                        }
-                    } else {
-                        if delta > 0 {
+                        ScrollPanel::Output => {
                             app.follow_mode = false;
                             app.scroll_offset = app.scroll_offset.saturating_add(1);
-                        } else {
+                        }
+                    }
+                }
+                Action::ScrollDown(mx, my) => {
+                    let target = scroll_target(&app, mx, my);
+                    match target {
+                        ScrollPanel::FileBrowser => {
+                            let visible = app.file_browser_area.height.saturating_sub(2);
+                            let total = app.file_browser.entries.len() as u16;
+                            let max_scroll = total.saturating_sub(visible);
+                            app.file_browser.scroll_offset = app
+                                .file_browser
+                                .scroll_offset
+                                .saturating_add(1)
+                                .min(max_scroll);
+                        }
+                        ScrollPanel::FileViewer => {
+                            let total = app.file_highlighted.len().max(
+                                app.file_content.lines().count(),
+                            ) as u16;
+                            let visible = app.file_viewer_area.height.saturating_sub(2);
+                            let max_scroll = total.saturating_sub(visible);
+                            app.file_scroll = app.file_scroll.saturating_add(1).min(max_scroll);
+                        }
+                        ScrollPanel::GitStatus => {
+                            app.git_status_scroll = app.git_status_scroll.saturating_add(1);
+                        }
+                        ScrollPanel::GitLog => {
+                            app.git_log_scroll = app.git_log_scroll.saturating_add(1);
+                            let log_lines = app.git_log.lines().count() as u16;
+                            if app.git_log_has_more && app.git_log_scroll + 40 >= log_lines {
+                                app.git_log_limit += 200;
+                                refresh_git_log(&mut app);
+                            }
+                        }
+                        ScrollPanel::Output => {
                             app.scroll_offset = app.scroll_offset.saturating_sub(1);
                             if app.scroll_offset == 0 {
                                 app.follow_mode = true;
@@ -477,38 +588,58 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         }
                     }
                 }
-                Action::ScrollDown => {
-                    let reversed = app.is_narrow;
-                    let delta: i16 = if reversed { 1 } else { -1 };
-
-                    if app.focus == app::FocusPanel::FileBrowser && app.show_file_browser {
-                        if delta > 0 {
-                            app.file_browser.move_down();
-                        } else {
-                            app.file_browser.move_up();
+                Action::ScrollToTop => {
+                    match app.focus {
+                        app::FocusPanel::FileBrowser => {
+                            app.file_browser.scroll_offset = 0;
                         }
-                        let sel = app.file_browser.selected as u16;
-                        let visible = app.file_browser_area.height.saturating_sub(2);
-                        if sel >= app.file_browser.scroll_offset + visible {
-                            app.file_browser.scroll_offset = sel.saturating_sub(visible) + 1;
+                        app::FocusPanel::FileViewer => {
+                            app.file_scroll = 0;
+                            app.file_scroll_h = 0;
                         }
-                    } else if app.focus == app::FocusPanel::GitPanel && app.show_right_panel {
-                        if delta < 0 {
-                            app.git_status_scroll = app.git_status_scroll.saturating_add(1);
-                            app.git_log_scroll = app.git_log_scroll.saturating_add(1);
-                        } else {
-                            app.git_status_scroll = app.git_status_scroll.saturating_sub(1);
-                            app.git_log_scroll = app.git_log_scroll.saturating_sub(1);
+                        app::FocusPanel::GitStatus => {
+                            app.git_status_scroll = 0;
                         }
-                    } else {
-                        if delta < 0 {
-                            app.follow_mode = false;
-                            app.scroll_offset = app.scroll_offset.saturating_add(1);
-                        } else {
-                            app.scroll_offset = app.scroll_offset.saturating_sub(1);
-                            if app.scroll_offset == 0 {
-                                app.follow_mode = true;
+                        app::FocusPanel::GitLog => {
+                            app.git_log_scroll = 0;
+                        }
+                        app::FocusPanel::Output => {
+                            // Scroll to top of scrollback
+                            if let Some(parser) = &mut app.pty_parser {
+                                let screen = parser.screen_mut();
+                                screen.set_scrollback(usize::MAX);
+                                let max = screen.scrollback() as u16;
+                                screen.set_scrollback(0);
+                                app.scroll_offset = max;
+                                app.follow_mode = false;
                             }
+                        }
+                    }
+                }
+                Action::ScrollToBottom => {
+                    match app.focus {
+                        app::FocusPanel::FileBrowser => {
+                            let visible = app.file_browser_area.height.saturating_sub(2);
+                            let total = app.file_browser.entries.len() as u16;
+                            app.file_browser.scroll_offset = total.saturating_sub(visible);
+                        }
+                        app::FocusPanel::FileViewer => {
+                            let total = app.file_highlighted.len().max(
+                                app.file_content.lines().count(),
+                            ) as u16;
+                            let visible = app.file_viewer_area.height.saturating_sub(2);
+                            app.file_scroll = total.saturating_sub(visible);
+                        }
+                        app::FocusPanel::GitStatus => {
+                            // Will be clamped by render
+                            app.git_status_scroll = u16::MAX;
+                        }
+                        app::FocusPanel::GitLog => {
+                            app.git_log_scroll = u16::MAX;
+                        }
+                        app::FocusPanel::Output => {
+                            app.scroll_offset = 0;
+                            app.follow_mode = true;
                         }
                     }
                 }
@@ -549,12 +680,34 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         && mx < app.file_browser_area.x + app.file_browser_area.width
                     {
                         app.focus = app::FocusPanel::FileBrowser;
-                        // Click to select entry
                         let click_row = (my - app.file_browser_area.y).saturating_sub(1) as usize;
                         let idx = click_row + app.file_browser.scroll_offset as usize;
                         if idx < app.file_browser.entries.len() {
+                            let was_selected = app.file_browser.selected == idx;
                             app.file_browser.selected = idx;
+                            // Click again on same entry to open/toggle
+                            if was_selected {
+                                if let Some(entry) = app.file_browser.selected_entry() {
+                                    if entry.is_dir {
+                                        app.file_browser.toggle_expand();
+                                        let status = app.git_status.clone();
+                                        app.file_browser.update_git_status(&status);
+                                    } else {
+                                        let path = entry.path.to_string_lossy().to_string();
+                                        app.open_file(&path);
+                                        app.focus = app::FocusPanel::FileViewer;
+                                        last_resize = (0, 0);
+                                    }
+                                }
+                            }
                         }
+                    } else if app.file_viewer_area.width > 0
+                        && my >= app.file_viewer_area.y
+                        && my < app.file_viewer_area.y + app.file_viewer_area.height
+                        && mx >= app.file_viewer_area.x
+                        && mx < app.file_viewer_area.x + app.file_viewer_area.width
+                    {
+                        app.focus = app::FocusPanel::FileViewer;
                     } else if app.output_area.width > 0
                         && my >= app.output_area.y
                         && my < app.output_area.y + app.output_area.height
@@ -562,14 +715,62 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         && mx < app.output_area.x + app.output_area.width
                     {
                         app.focus = app::FocusPanel::Output;
-                    } else if app.git_panel_area.width > 0
-                        && my >= app.git_panel_area.y
-                        && my < app.git_panel_area.y + app.git_panel_area.height
-                        && mx >= app.git_panel_area.x
-                        && mx < app.git_panel_area.x + app.git_panel_area.width
+                        // Start text selection
+                        let border = if app.is_narrow { 0 } else { 1 };
+                        let rel_col = mx.saturating_sub(app.output_area.x + border);
+                        let rel_row = my.saturating_sub(app.output_area.y + border);
+                        app.selection = Some(app::TextSelection {
+                            start_col: rel_col,
+                            start_row: rel_row,
+                            end_col: rel_col,
+                            end_row: rel_row,
+                            active: true,
+                        });
+                    } else if app.git_status_area.width > 0
+                        && my >= app.git_status_area.y
+                        && my < app.git_status_area.y + app.git_status_area.height
+                        && mx >= app.git_status_area.x
+                        && mx < app.git_status_area.x + app.git_status_area.width
                     {
-                        app.focus = app::FocusPanel::GitPanel;
+                        app.focus = app::FocusPanel::GitStatus;
+                    } else if app.git_log_area.width > 0
+                        && my >= app.git_log_area.y
+                        && my < app.git_log_area.y + app.git_log_area.height
+                        && mx >= app.git_log_area.x
+                        && mx < app.git_log_area.x + app.git_log_area.width
+                    {
+                        app.focus = app::FocusPanel::GitLog;
                     }
+                }
+                Action::MouseDrag(mx, my) => {
+                    if let Some(ref mut sel) = app.selection {
+                        if sel.active {
+                            let border = if app.is_narrow { 0 } else { 1 };
+                            sel.end_col = mx.saturating_sub(app.output_area.x + border);
+                            sel.end_row = my.saturating_sub(app.output_area.y + border);
+                        }
+                    }
+                }
+                Action::MouseRelease(_mx, _my) => {
+                    if let Some(ref sel) = app.selection {
+                        // Discard if no actual drag happened (single click)
+                        if sel.start_col == sel.end_col && sel.start_row == sel.end_row {
+                            app.selection = None;
+                        } else if let Some(ref mut sel) = app.selection {
+                            sel.active = false;
+                        }
+                    }
+                }
+                Action::CopySelection => {
+                    if let Some(ref sel) = app.selection {
+                        if let Some(parser) = &app.pty_parser {
+                            let text = extract_selection(parser.screen(), sel);
+                            if !text.is_empty() {
+                                copy_to_clipboard(&text);
+                            }
+                        }
+                    }
+                    app.selection = None;
                 }
                 Action::None => {}
                 _ => {}
@@ -580,6 +781,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             refresh_output(&mut app);
             last_output_refresh = Instant::now();
         }
+
 
         if app.should_quit {
             break;
@@ -631,10 +833,182 @@ fn special_key_sequence(key: &str) -> String {
     }
 }
 
+enum ScrollPanel {
+    Output,
+    FileViewer,
+    GitStatus,
+    GitLog,
+    FileBrowser,
+}
+
+/// Determine which panel a mouse scroll should target based on cursor position.
+/// Falls back to the focused panel when position is (0,0) (keyboard PageUp/Down).
+fn scroll_target(app: &App, mx: u16, my: u16) -> ScrollPanel {
+    // (0,0) = keyboard, use focus
+    if mx == 0 && my == 0 {
+        return match app.focus {
+            app::FocusPanel::FileBrowser => ScrollPanel::FileBrowser,
+            app::FocusPanel::GitStatus => ScrollPanel::GitStatus,
+            app::FocusPanel::GitLog => ScrollPanel::GitLog,
+            app::FocusPanel::FileViewer => ScrollPanel::FileViewer,
+            app::FocusPanel::Output => ScrollPanel::Output,
+        };
+    }
+
+    let in_rect = |r: ratatui::layout::Rect| {
+        r.width > 0 && mx >= r.x && mx < r.x + r.width && my >= r.y && my < r.y + r.height
+    };
+
+    if app.show_file_browser && in_rect(app.file_browser_area) {
+        ScrollPanel::FileBrowser
+    } else if in_rect(app.file_viewer_area) {
+        ScrollPanel::FileViewer
+    } else if in_rect(app.git_status_area) {
+        ScrollPanel::GitStatus
+    } else if in_rect(app.git_log_area) {
+        ScrollPanel::GitLog
+    } else {
+        ScrollPanel::Output
+    }
+}
+
+/// Extract text from vt100 screen within the selection bounds.
+fn extract_selection(screen: &vt100::Screen, sel: &app::TextSelection) -> String {
+    let (rows, cols) = screen.size();
+    // Normalize start/end so start <= end
+    let (sr, sc, er, ec) = if sel.start_row < sel.end_row
+        || (sel.start_row == sel.end_row && sel.start_col <= sel.end_col)
+    {
+        (sel.start_row, sel.start_col, sel.end_row, sel.end_col)
+    } else {
+        (sel.end_row, sel.end_col, sel.start_row, sel.start_col)
+    };
+
+    let mut result = String::new();
+    for row in sr..=er.min(rows.saturating_sub(1)) {
+        let col_start = if row == sr { sc } else { 0 };
+        let col_end = if row == er { ec } else { cols.saturating_sub(1) };
+        for col in col_start..=col_end.min(cols.saturating_sub(1)) {
+            if let Some(cell) = screen.cell(row, col) {
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                let ch = cell.contents();
+                if ch.is_empty() {
+                    result.push(' ');
+                } else {
+                    result.push_str(ch);
+                }
+            }
+        }
+        // Trim trailing spaces from each line
+        let trimmed_len = result.trim_end_matches(' ').len();
+        result.truncate(trimmed_len);
+        if row < er {
+            result.push('\n');
+        }
+    }
+    result
+}
+
+/// Copy text to the system clipboard using OSC 52 escape sequence.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    let encoded = base64_encode(text.as_bytes());
+    let osc = format!("\x1b]52;c;{}\x07", encoded);
+    let _ = io::stdout().write_all(osc.as_bytes());
+    let _ = io::stdout().flush();
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((n >> 18) & 63) as usize] as char);
+        result.push(CHARS[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((n >> 6) & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
 fn refresh_output(app: &mut App) {
-    if app.session_manager.active_session().is_some() {
-        if let Ok(output) = app.session_manager.read_output() {
-            app.claude_output = output;
+    let session_id = match app.session_manager.active_session() {
+        Some(s) => s.session_id.clone(),
+        None => return,
+    };
+
+    let session_changed = app.pty_session_id != session_id;
+
+    if session_changed || app.pty_parser.is_none() {
+        // Full read + reparse on session switch or first init
+        let (data, new_offset) = match app.session_manager.read_output_bytes_full() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let rows = app.output_height.max(24);
+        let cols = app.output_width.max(80);
+        let mut parser = vt100::Parser::new_with_callbacks(
+            rows,
+            cols,
+            10000,
+            app::PtyCallbacks::default(),
+        );
+        parser.process(&data);
+        app.pty_parser = Some(parser);
+        app.pty_session_id = session_id;
+        app.pty_last_len = new_offset;
+    } else {
+        // Incremental read — only get new bytes since last offset
+        let (data, new_offset) = match app.session_manager.read_output_bytes() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        if new_offset < app.pty_last_len {
+            // Buffer was truncated by daemon — full reset
+            let (full_data, full_offset) = match app.session_manager.read_output_bytes_full() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            let rows = app.output_height.max(24);
+            let cols = app.output_width.max(80);
+            let mut parser = vt100::Parser::new_with_callbacks(
+                rows,
+                cols,
+                10000,
+                app::PtyCallbacks::default(),
+            );
+            parser.process(&full_data);
+            app.pty_parser = Some(parser);
+            app.pty_last_len = full_offset;
+        } else if !data.is_empty() {
+            // Feed only new bytes to parser
+            if let Some(parser) = &mut app.pty_parser {
+                parser.process(&data);
+            }
+            app.pty_last_len = new_offset;
+        }
+        // else: no new data, skip
+    }
+
+    // Extract title from vt100 callbacks
+    if let Some(parser) = &app.pty_parser {
+        let title = &parser.callbacks().title;
+        if app.pty_title != *title {
+            app.pty_title = title.clone();
         }
     }
 }

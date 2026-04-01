@@ -135,7 +135,25 @@ impl SessionManager {
     /// Read incremental output from the active session.
     pub fn read_output(&mut self) -> Result<String> {
         let idx = self.active_index;
-        let (session_id, _offset) = {
+        let session_id = self
+            .sessions
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("no active session"))?
+            .session_id
+            .clone();
+        let daemon = self.daemon()?;
+        let (data, new_offset) = daemon.read_output(&session_id, 0)?; // Read full buffer
+        if let Some(s) = self.sessions.get_mut(idx) {
+            s.output_offset = new_offset;
+        }
+        Ok(String::from_utf8_lossy(&data).to_string())
+    }
+
+    /// Read raw bytes from the active session (for vt100 parser).
+    /// Uses incremental reads from the last known offset.
+    pub fn read_output_bytes(&mut self) -> Result<(Vec<u8>, usize)> {
+        let idx = self.active_index;
+        let (session_id, offset) = {
             let s = self
                 .sessions
                 .get(idx)
@@ -143,11 +161,28 @@ impl SessionManager {
             (s.session_id.clone(), s.output_offset)
         };
         let daemon = self.daemon()?;
-        let (data, new_offset) = daemon.read_output(&session_id, 0)?; // Read full buffer
+        let (data, new_offset) = daemon.read_output(&session_id, offset)?;
         if let Some(s) = self.sessions.get_mut(idx) {
             s.output_offset = new_offset;
         }
-        Ok(String::from_utf8_lossy(&data).to_string())
+        Ok((data, new_offset))
+    }
+
+    /// Read the full output buffer for the active session (for parser reset).
+    pub fn read_output_bytes_full(&mut self) -> Result<(Vec<u8>, usize)> {
+        let idx = self.active_index;
+        let session_id = self
+            .sessions
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("no active session"))?
+            .session_id
+            .clone();
+        let daemon = self.daemon()?;
+        let (data, new_offset) = daemon.read_output(&session_id, 0)?;
+        if let Some(s) = self.sessions.get_mut(idx) {
+            s.output_offset = new_offset;
+        }
+        Ok((data, new_offset))
     }
 
     /// Read output from a specific session by index.

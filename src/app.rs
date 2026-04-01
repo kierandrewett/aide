@@ -13,8 +13,34 @@ use crate::sessions::SessionManager;
 #[derive(Clone, Copy, PartialEq)]
 pub enum FocusPanel {
     Output,
-    GitPanel,
+    FileViewer,
+    GitStatus,
+    GitLog,
     FileBrowser,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextSelection {
+    /// Start position in screen coordinates (col, row) relative to output area
+    pub start_col: u16,
+    pub start_row: u16,
+    /// Current/end position
+    pub end_col: u16,
+    pub end_row: u16,
+    /// Whether user is currently dragging
+    pub active: bool,
+}
+
+/// Callbacks for vt100 parser to capture PTY title changes.
+#[derive(Clone, Default)]
+pub struct PtyCallbacks {
+    pub title: String,
+}
+
+impl vt100::Callbacks for PtyCallbacks {
+    fn set_window_title(&mut self, _screen: &mut vt100::Screen, title: &[u8]) {
+        self.title = String::from_utf8_lossy(title).to_string();
+    }
 }
 
 pub struct App {
@@ -57,16 +83,36 @@ pub struct App {
     pub viewing_file: Option<String>,
     /// Cached file content for viewer
     pub file_content: String,
-    /// File viewer scroll offset
+    /// Pre-highlighted lines cache (avoids re-running syntect every frame)
+    pub file_highlighted: Vec<Vec<(syntect::highlighting::Style, String)>>,
+    /// File viewer vertical scroll offset
     pub file_scroll: u16,
+    /// File viewer horizontal scroll offset
+    pub file_scroll_h: u16,
     /// On narrow mode, whether to show file view or terminal
     pub show_file_view: bool,
     // Click target areas
     pub tab_bar_area: Rect,
     pub output_area: Rect,
+    #[allow(dead_code)]
     pub git_panel_area: Rect,
     pub file_browser_area: Rect,
+    pub file_viewer_area: Rect,
     pub tab_click_zones: Vec<(u16, u16, usize)>,
+    /// Cached project files for command palette (populated on open)
+    pub cached_project_files: Vec<(String, String, String)>,
+    /// Transient error message to display in the UI (auto-clears on next action)
+    pub error_message: Option<String>,
+    // PTY terminal emulator
+    pub pty_parser: Option<vt100::Parser<PtyCallbacks>>,
+    pub pty_session_id: String,
+    pub pty_last_len: usize,
+    pub pty_title: String,
+    // Text selection state
+    pub selection: Option<TextSelection>,
+    // Sub-areas for git panel click detection
+    pub git_status_area: Rect,
+    pub git_log_area: Rect,
 }
 
 impl App {
@@ -112,13 +158,25 @@ impl App {
             file_browser: FileBrowser::new(),
             viewing_file: None,
             file_content: String::new(),
+            file_highlighted: Vec::new(),
             file_scroll: 0,
+            file_scroll_h: 0,
             show_file_view: false,
             tab_bar_area: Rect::default(),
             output_area: Rect::default(),
             git_panel_area: Rect::default(),
             file_browser_area: Rect::default(),
+            file_viewer_area: Rect::default(),
             tab_click_zones: Vec::new(),
+            cached_project_files: Vec::new(),
+            error_message: None,
+            selection: None,
+            pty_parser: None,
+            pty_session_id: String::new(),
+            pty_last_len: 0,
+            pty_title: String::new(),
+            git_status_area: Rect::default(),
+            git_log_area: Rect::default(),
         }
     }
 
@@ -169,24 +227,26 @@ impl App {
         }
     }
 
-    pub fn create_session_for_project(&mut self, project: &str) -> Result<()> {
+    pub fn create_session_for_project(&mut self, project: &str) {
         let dir = self.projects_dir.join(project);
         let dir_str = dir.to_string_lossy().to_string();
-        self.session_manager.create_session(project, &dir_str)?;
-        self.refresh_data();
-        Ok(())
+        match self.session_manager.create_session(project, &dir_str) {
+            Ok(_) => self.refresh_data(),
+            Err(e) => self.error_message = Some(format!("Failed to open project: {}", e)),
+        }
     }
 
     /// Open folder by full path (for command palette "Open Folder").
     #[allow(dead_code)]
-    pub fn open_folder(&mut self, path: &str) -> Result<()> {
+    pub fn open_folder(&mut self, path: &str) {
         let name = std::path::Path::new(path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("session");
-        self.session_manager.create_session(name, path)?;
-        self.refresh_data();
-        Ok(())
+        match self.session_manager.create_session(name, path) {
+            Ok(_) => self.refresh_data(),
+            Err(e) => self.error_message = Some(format!("Failed to open folder: {}", e)),
+        }
     }
 
     pub fn filtered_projects(&self) -> Vec<String> {
@@ -206,6 +266,17 @@ impl App {
     // Command palette
     pub fn open_command_palette(&mut self) {
         self.available_projects = discover_projects(&self.projects_dir);
+        // Cache project files for fast filtering
+        if let Some(session) = self.session_manager.active_session() {
+            let dir = session.directory.clone();
+            if !dir.is_empty() && !self.is_on_welcome() {
+                self.cached_project_files = recent_project_files(&dir);
+            } else {
+                self.cached_project_files.clear();
+            }
+        } else {
+            self.cached_project_files.clear();
+        }
         self.show_command_palette = true;
         self.command_palette_filter.clear();
         self.command_palette_selected = 0;
@@ -220,32 +291,45 @@ impl App {
 
     pub fn command_palette_items(&self) -> Vec<PaletteItem> {
         let filter = self.command_palette_filter.to_lowercase();
+        let has_session = self.session_manager.active_session().is_some() && !self.is_on_welcome();
         let mut items = Vec::new();
 
         // Built-in commands
-        items.push(PaletteItem {
-            label: "Open Folder...".to_string(),
-            kind: PaletteKind::OpenFolder,
-        });
-        items.push(PaletteItem {
-            label: "New Terminal".to_string(),
-            kind: PaletteKind::NewTerminal,
-        });
-        items.push(PaletteItem {
-            label: "Toggle Git Panel".to_string(),
-            kind: PaletteKind::ToggleGit,
-        });
-        items.push(PaletteItem {
-            label: "Toggle File Browser".to_string(),
-            kind: PaletteKind::ToggleFileBrowser,
-        });
-
-        // Add projects as "Open: project_name"
-        for project in &self.available_projects {
+        let commands: Vec<(&str, PaletteKind)> = vec![
+            ("Open Folder...", PaletteKind::OpenFolder),
+            ("New Tab", PaletteKind::NewTerminal),
+            ("Toggle Git Panel", PaletteKind::ToggleGit),
+            ("Toggle File Browser", PaletteKind::ToggleFileBrowser),
+        ];
+        for (label, kind) in commands {
             items.push(PaletteItem {
-                label: format!("Open: {}", project),
-                kind: PaletteKind::OpenProject(project.clone()),
+                label: label.to_string(),
+                subtitle: String::new(),
+                kind,
             });
+        }
+
+        // Show projects when not in a session, or when filter matches "Open:" flow
+        let show_projects = !has_session || filter.starts_with("open:");
+        if show_projects {
+            for project in &self.available_projects {
+                items.push(PaletteItem {
+                    label: format!("Open: {}", project),
+                    subtitle: String::new(),
+                    kind: PaletteKind::OpenProject(project.clone()),
+                });
+            }
+        }
+
+        // In an open folder: show project files
+        if has_session {
+            for (name, rel_path, full_path) in &self.cached_project_files {
+                items.push(PaletteItem {
+                    label: name.clone(),
+                    subtitle: rel_path.clone(),
+                    kind: PaletteKind::ProjectFile(full_path.clone()),
+                });
+            }
         }
 
         if filter.is_empty() {
@@ -253,12 +337,15 @@ impl App {
         } else {
             items
                 .into_iter()
-                .filter(|i| i.label.to_lowercase().contains(&filter))
+                .filter(|i| {
+                    i.label.to_lowercase().contains(&filter)
+                        || i.subtitle.to_lowercase().contains(&filter)
+                })
                 .collect()
         }
     }
 
-    pub fn command_palette_confirm(&mut self) -> Result<()> {
+    pub fn command_palette_confirm(&mut self) {
         let items = self.command_palette_items();
         if let Some(item) = items.get(self.command_palette_selected).cloned() {
             let was_on_welcome = self.is_on_welcome();
@@ -267,11 +354,11 @@ impl App {
                 PaletteKind::OpenFolder => {
                     // Re-open command palette with "Open:" prefix to filter to projects
                     self.open_command_palette();
-                    self.command_palette_filter = "Open:".to_string();
+                    self.command_palette_filter = "Open: ".to_string();
                 }
                 PaletteKind::OpenProject(project) => {
-                    self.create_session_for_project(&project)?;
-                    if was_on_welcome {
+                    self.create_session_for_project(&project);
+                    if was_on_welcome && self.error_message.is_none() {
                         self.show_welcome = false;
                     }
                 }
@@ -285,9 +372,12 @@ impl App {
                 PaletteKind::ToggleFileBrowser => {
                     self.show_file_browser = !self.show_file_browser;
                 }
+                PaletteKind::ProjectFile(path) => {
+                    self.open_file(&path);
+                    self.show_file_browser = true;
+                }
             }
         }
-        Ok(())
     }
 
     pub fn command_palette_move_down(&mut self) {
@@ -313,8 +403,10 @@ impl App {
         match std::fs::read_to_string(path) {
             Ok(content) => {
                 self.viewing_file = Some(path.to_string());
+                self.file_highlighted = highlight_file(path, &content);
                 self.file_content = content;
                 self.file_scroll = 0;
+                self.file_scroll_h = 0;
                 self.show_file_view = true;
             }
             Err(_) => {
@@ -327,7 +419,9 @@ impl App {
     pub fn close_file(&mut self) {
         self.viewing_file = None;
         self.file_content.clear();
+        self.file_highlighted.clear();
         self.file_scroll = 0;
+        self.file_scroll_h = 0;
         self.show_file_view = false;
     }
 
@@ -349,6 +443,8 @@ impl App {
 #[derive(Clone)]
 pub struct PaletteItem {
     pub label: String,
+    /// Optional secondary text (e.g. file path)
+    pub subtitle: String,
     pub kind: PaletteKind,
 }
 
@@ -359,6 +455,112 @@ pub enum PaletteKind {
     NewTerminal,
     ToggleGit,
     ToggleFileBrowser,
+    /// Open a file from the project index
+    ProjectFile(String),
+}
+
+/// Pre-highlight a file's content using syntect. Returns styled ranges per line.
+fn highlight_file(path: &str, content: &str) -> Vec<Vec<(syntect::highlighting::Style, String)>> {
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::ThemeSet;
+    use syntect::parsing::SyntaxSet;
+
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let theme = &ts.themes["base16-eighties.dark"];
+    let syntax = ss
+        .find_syntax_for_file(path)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| ss.find_syntax_plain_text());
+    let mut h = HighlightLines::new(syntax, theme);
+
+    content
+        .lines()
+        .map(|line| {
+            h.highlight_line(line, &ss)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(style, text)| (style, text.to_string()))
+                .collect()
+        })
+        .collect()
+}
+
+/// Get project files sorted by modification time (most recent first).
+/// Returns (filename, relative_path, absolute_path).
+fn recent_project_files(dir: &str) -> Vec<(String, String, String)> {
+    use std::process::Command;
+
+    // Try git ls-files first (fast, respects .gitignore)
+    let git_output = Command::new("git")
+        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+        .current_dir(dir)
+        .output();
+
+    let file_list: Vec<String> = match git_output {
+        Ok(out) if out.status.success() && !out.stdout.is_empty() => {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        }
+        _ => {
+            // Not a git repo — use find, skip hidden dirs and common junk
+            let find_output = Command::new("find")
+                .args([
+                    ".", "-type", "f",
+                    "-not", "-path", "*/.*",
+                    "-not", "-path", "*/node_modules/*",
+                    "-not", "-path", "*/target/*",
+                    "-not", "-path", "*/__pycache__/*",
+                    "-not", "-path", "*/venv/*",
+                ])
+                .current_dir(dir)
+                .output();
+            match find_output {
+                Ok(out) => {
+                    String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .filter(|l| !l.is_empty())
+                        .map(|l| l.strip_prefix("./").unwrap_or(l).to_string())
+                        .collect()
+                }
+                Err(_) => return Vec::new(),
+            }
+        }
+    };
+
+    // Get modification times and sort
+    let root = std::path::Path::new(dir);
+    let mut files_with_mtime: Vec<(String, String, String, u64)> = file_list
+        .into_iter()
+        .filter_map(|rel| {
+            let full = root.join(&rel);
+            let mtime = full
+                .metadata()
+                .ok()?
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            let name = std::path::Path::new(&rel)
+                .file_name()?
+                .to_str()?
+                .to_string();
+            let full_str = full.to_string_lossy().to_string();
+            Some((name, rel, full_str, mtime))
+        })
+        .collect();
+
+    files_with_mtime.sort_by(|a, b| b.3.cmp(&a.3)); // newest first
+
+    files_with_mtime
+        .into_iter()
+        .map(|(name, rel, full, _)| (name, rel, full))
+        .collect()
 }
 
 fn discover_projects(dir: &PathBuf) -> Vec<String> {

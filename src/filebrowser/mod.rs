@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Clone, Debug)]
 pub struct FileEntry {
@@ -9,6 +11,8 @@ pub struct FileEntry {
     pub expanded: bool,
     /// Git status: None = clean, Some('A') = added, Some('M') = modified, Some('D') = deleted, Some('?') = untracked
     pub git_status: Option<char>,
+    /// Whether this file/folder is matched by .gitignore
+    pub is_ignored: bool,
 }
 
 pub struct FileBrowser {
@@ -40,6 +44,20 @@ impl FileBrowser {
         self.entries.clear();
         if self.root.exists() {
             self.load_dir(&self.root.clone(), 0);
+            self.update_ignored();
+        }
+    }
+
+    /// Query git to find ignored files and mark them.
+    fn update_ignored(&mut self) {
+        let ignored = git_ignored_paths(&self.root);
+        for entry in &mut self.entries {
+            if let Ok(rel) = entry.path.strip_prefix(&self.root) {
+                let rel_str = rel.to_string_lossy().to_string();
+                // Check exact match or if any parent is ignored
+                entry.is_ignored = ignored.contains(&rel_str)
+                    || ignored.contains(&format!("{}/", rel_str));
+            }
         }
     }
 
@@ -132,6 +150,7 @@ impl FileBrowser {
                 depth,
                 expanded: false,
                 git_status: None,
+                is_ignored: false,
             });
         }
     }
@@ -193,11 +212,18 @@ impl FileBrowser {
                         depth: depth + 1,
                         expanded: false,
                         git_status: None,
+                        is_ignored: false,
                     });
                 }
             }
 
-            for (i, child) in children.into_iter().enumerate() {
+            let ignored = git_ignored_paths(&self.root);
+            for (i, mut child) in children.into_iter().enumerate() {
+                if let Ok(rel) = child.path.strip_prefix(&self.root) {
+                    let rel_str = rel.to_string_lossy().to_string();
+                    child.is_ignored = ignored.contains(&rel_str)
+                        || ignored.contains(&format!("{}/", rel_str));
+                }
                 self.entries.insert(insert_pos + i, child);
             }
         }
@@ -223,4 +249,27 @@ impl FileBrowser {
     pub fn selected_entry(&self) -> Option<&FileEntry> {
         self.entries.get(self.selected)
     }
+}
+
+/// Get set of relative paths that are ignored by git.
+fn git_ignored_paths(root: &Path) -> HashSet<String> {
+    let mut ignored = HashSet::new();
+    // git ls-files --others --ignored --exclude-standard --directory
+    // gives us ignored files/dirs relative to the repo root
+    let output = Command::new("git")
+        .args(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"])
+        .current_dir(root)
+        .output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            let trimmed = line.trim_end_matches('/');
+            if !trimmed.is_empty() {
+                ignored.insert(trimmed.to_string());
+                // Also add with trailing slash for directory matching
+                ignored.insert(format!("{}/", trimmed));
+            }
+        }
+    }
+    ignored
 }

@@ -1,11 +1,12 @@
 use ansi_to_tui::IntoText;
+use syntect::highlighting::Style as SyntectStyle;
 use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -13,6 +14,119 @@ use crate::app::{App, FocusPanel};
 
 const FOCUSED_BORDER: Color = Color::Cyan;
 const UNFOCUSED_BORDER: Color = Color::DarkGray;
+const SCROLLBAR_THUMB_FOCUSED: Color = Color::Cyan;
+const SCROLLBAR_THUMB_UNFOCUSED: Color = Color::Rgb(120, 120, 120);
+const SCROLLBAR_TRACK: Color = Color::Rgb(60, 60, 60);
+
+/// Convert a vt100 Color to a ratatui Color.
+fn vt100_color(c: vt100::Color) -> Option<Color> {
+    match c {
+        vt100::Color::Default => None,
+        vt100::Color::Idx(i) => Some(Color::Indexed(i)),
+        vt100::Color::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
+    }
+}
+
+/// Check if a cell (row, col) is within a selection range.
+fn in_selection(sel: &crate::app::TextSelection, row: u16, col: u16, cols: u16) -> bool {
+    let (sr, sc, er, ec) = if sel.start_row < sel.end_row
+        || (sel.start_row == sel.end_row && sel.start_col <= sel.end_col)
+    {
+        (sel.start_row, sel.start_col, sel.end_row, sel.end_col)
+    } else {
+        (sel.end_row, sel.end_col, sel.start_row, sel.start_col)
+    };
+    if row < sr || row > er {
+        return false;
+    }
+    let line_start = if row == sr { sc } else { 0 };
+    let line_end = if row == er { ec } else { cols.saturating_sub(1) };
+    col >= line_start && col <= line_end
+}
+
+/// Build ratatui Text directly from vt100 screen cells.
+fn vt100_screen_to_text(
+    screen: &vt100::Screen,
+    selection: Option<&crate::app::TextSelection>,
+) -> Text<'static> {
+    let (rows, cols) = screen.size();
+    let mut lines = Vec::with_capacity(rows as usize);
+
+    for row in 0..rows {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut buf = String::new();
+        let mut cur_style = Style::default();
+        let mut col = 0u16;
+
+        while col < cols {
+            let cell = match screen.cell(row, col) {
+                Some(c) => c,
+                None => {
+                    col += 1;
+                    continue;
+                }
+            };
+
+            if cell.is_wide_continuation() {
+                col += 1;
+                continue;
+            }
+
+            let mut style = Style::default();
+            if let Some(fg) = vt100_color(cell.fgcolor()) {
+                style = style.fg(fg);
+            }
+            if let Some(bg) = vt100_color(cell.bgcolor()) {
+                style = style.bg(bg);
+            }
+            if cell.bold() {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            if cell.dim() {
+                style = style.add_modifier(Modifier::DIM);
+            }
+            if cell.italic() {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            if cell.underline() {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            if cell.inverse() {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+
+            // Apply selection highlight
+            if let Some(sel) = selection {
+                if in_selection(sel, row, col, cols) {
+                    style = style.bg(Color::Rgb(60, 80, 140));
+                }
+            }
+
+            let ch = cell.contents();
+
+            if style != cur_style && !buf.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut buf), cur_style));
+            }
+            cur_style = style;
+
+            if ch.is_empty() {
+                buf.push(' ');
+            } else {
+                buf.push_str(ch);
+            }
+
+            col += if cell.is_wide() { 2 } else { 1 };
+        }
+
+        if !buf.is_empty() {
+            spans.push(Span::styled(buf, cur_style));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    Text::from(lines)
+}
 
 /// Render a scrollbar on the right edge of a panel area.
 fn render_scrollbar(
@@ -21,12 +135,13 @@ fn render_scrollbar(
     is_narrow: bool,
     scroll_offset: u16,
     max_scroll: u16,
+    focused: bool,
 ) {
     if max_scroll == 0 || area.height < 3 {
         return;
     }
 
-    let border_top: u16 = if is_narrow { 1 } else { 1 };
+    let border_top: u16 = 1;
     let border_bottom: u16 = if is_narrow { 0 } else { 1 };
     let track_height = area
         .height
@@ -49,6 +164,12 @@ fn render_scrollbar(
         0
     };
 
+    let thumb_color = if focused {
+        SCROLLBAR_THUMB_FOCUSED
+    } else {
+        SCROLLBAR_THUMB_UNFOCUSED
+    };
+
     let bar_x = area.x + area.width.saturating_sub(1);
     let bar_y_start = area.y + border_top;
 
@@ -57,15 +178,12 @@ fn render_scrollbar(
         if y >= area.y + area.height.saturating_sub(border_bottom) {
             break;
         }
-        let ch = if i >= thumb_pos && i < thumb_pos + thumb_size {
-            "┃"
+        let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
+        let ch = if is_thumb { "┃" } else { "│" };
+        let style = if is_thumb {
+            Style::default().fg(thumb_color)
         } else {
-            "│"
-        };
-        let style = if i >= thumb_pos && i < thumb_pos + thumb_size {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::Rgb(60, 60, 60))
+            Style::default().fg(SCROLLBAR_TRACK)
         };
         let scroll_area = Rect::new(bar_x, y, 1, 1);
         frame.render_widget(Paragraph::new(Span::styled(ch, style)), scroll_area);
@@ -119,7 +237,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     if app.is_on_welcome() {
         app.output_area = Rect::default();
-        app.git_panel_area = Rect::default();
+        app.git_status_area = Rect::default();
+        app.git_log_area = Rect::default();
         app.file_browser_area = Rect::default();
         draw_splash(frame, app, body_area);
         draw_status_bar(frame, app, status_area);
@@ -152,46 +271,75 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         body_area
     };
 
-    // File view mode: if a file is open, split between file content and terminal
-    if app.viewing_file.is_some() && !is_narrow {
-        let h_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_body);
+    // Build layout: all panels can coexist independently
+    // [file_viewer?] [terminal] [git_panel?]
+    if is_narrow {
+        // Narrow: only one panel at a time, priority: git > file_view > terminal
+        app.file_viewer_area = Rect::default();
+        app.output_area = Rect::default();
+        app.git_status_area = Rect::default();
+        app.git_log_area = Rect::default();
 
-        draw_file_viewer(frame, app, h_chunks[0], is_narrow);
-        app.output_area = h_chunks[1];
-        app.git_panel_area = Rect::default();
-        draw_claude_output(frame, app, h_chunks[1], is_narrow);
-    } else if app.viewing_file.is_some() && is_narrow {
-        // Mobile: show file content full-width (toggle with ctrl+f)
-        if app.show_file_view {
+        if app.show_right_panel {
+            draw_right_panel(frame, app, main_body, is_narrow);
+        } else if app.viewing_file.is_some() && app.show_file_browser && app.show_file_view {
+            app.file_viewer_area = main_body;
             draw_file_viewer(frame, app, main_body, is_narrow);
-            app.output_area = Rect::default();
-            app.git_panel_area = Rect::default();
         } else {
             app.output_area = main_body;
-            app.git_panel_area = Rect::default();
             draw_claude_output(frame, app, main_body, is_narrow);
         }
-    } else if app.show_right_panel && is_narrow {
+    } else {
+        // Wide: build constraints dynamically based on visible panels
+        // File viewer only shows when file browser is open and a file is selected
+        let has_file_viewer = app.viewing_file.is_some() && app.show_file_browser;
+        let has_git = app.show_right_panel;
+
+        // Reset areas
+        app.file_viewer_area = Rect::default();
         app.output_area = Rect::default();
-        app.git_panel_area = main_body;
-        draw_right_panel(frame, app, main_body, is_narrow);
-    } else if app.show_right_panel {
+        app.git_status_area = Rect::default();
+        app.git_log_area = Rect::default();
+
+        // Determine column count and constraints
+        let mut constraints: Vec<Constraint> = Vec::new();
+        // Track what each column index maps to
+        // 0 = file_viewer, 1 = terminal, 2 = git_panel
+        let mut columns: Vec<u8> = Vec::new();
+
+        if has_file_viewer {
+            constraints.push(Constraint::Percentage(if has_git { 35 } else { 50 }));
+            columns.push(0);
+        }
+        // Terminal is always shown in wide mode
+        constraints.push(Constraint::Min(20));
+        columns.push(1);
+        if has_git {
+            constraints.push(Constraint::Percentage(30));
+            columns.push(2);
+        }
+
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+            .constraints(constraints)
             .split(main_body);
 
-        app.output_area = h_chunks[0];
-        app.git_panel_area = h_chunks[1];
-        draw_claude_output(frame, app, h_chunks[0], is_narrow);
-        draw_right_panel(frame, app, h_chunks[1], is_narrow);
-    } else {
-        app.output_area = main_body;
-        app.git_panel_area = Rect::default();
-        draw_claude_output(frame, app, main_body, is_narrow);
+        for (i, &col_type) in columns.iter().enumerate() {
+            match col_type {
+                0 => {
+                    app.file_viewer_area = h_chunks[i];
+                    draw_file_viewer(frame, app, h_chunks[i], is_narrow);
+                }
+                1 => {
+                    app.output_area = h_chunks[i];
+                    draw_claude_output(frame, app, h_chunks[i], is_narrow);
+                }
+                2 => {
+                    draw_right_panel(frame, app, h_chunks[i], is_narrow);
+                }
+                _ => {}
+            }
+        }
     }
 
     draw_status_bar(frame, app, status_area);
@@ -204,11 +352,37 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_command_palette(frame, app, size);
     }
 
+    // Error message overlay
+    if let Some(ref msg) = app.error_message {
+        let lines: Vec<Line> = msg
+            .lines()
+            .map(|l| Line::from(Span::styled(l, Style::default().fg(Color::White))))
+            .collect();
+        let height = (lines.len() as u16 + 2).min(size.height);
+        let width = (msg.len() as u16 + 4).min(size.width).max(30);
+        let area = Rect {
+            x: size.width.saturating_sub(width) / 2,
+            y: size.height.saturating_sub(height) / 2,
+            width,
+            height,
+        };
+        let block = Block::default()
+            .title(" Error ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Red))
+            .style(Style::default().bg(Color::Black));
+        let para = Paragraph::new(lines).block(block);
+        frame.render_widget(ratatui::widgets::Clear, area);
+        frame.render_widget(para, area);
+    }
+
     // File browser overlay on narrow mode
     if app.show_file_browser && is_narrow {
         let overlay_w = (size.width * 3 / 4).min(size.width);
         let overlay_area = Rect::new(0, tab_height, overlay_w, body_area.height);
         app.file_browser_area = overlay_area;
+        frame.render_widget(ratatui::widgets::Clear, overlay_area);
         draw_file_browser(frame, app, overlay_area, is_narrow);
     }
 }
@@ -228,6 +402,7 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
     };
     Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(title, title_style))
 }
@@ -243,7 +418,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
     if use_big_logo {
         let logo = vec![
             "",
-            "        ██████╗ ██╗██████╗ ███████╗",
+            "       ██████╗ ██╗██████╗ ███████╗",
             "       ██╔══██╗██║██╔══██╗██╔════╝",
             "       ███████║██║██║  ██║█████╗  ",
             "       ██╔══██║██║██║  ██║██╔══╝  ",
@@ -252,7 +427,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
             "",
         ];
 
-        let content_height = logo.len() + 4; // logo + subtitle + blank + hints + blank
+        let content_height = logo.len() + 8;
         let v_pad = (area.height as usize).saturating_sub(content_height) / 2;
         for _ in 0..v_pad {
             lines.push(Line::from(""));
@@ -266,7 +441,7 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
         }
     } else {
         // Compact: just the name, centered vertically
-        let content_height: usize = 5; // title + blank + subtitle + blank + hints
+        let content_height: usize = 9;
         let v_pad = (area.height as usize).saturating_sub(content_height) / 2;
         for _ in 0..v_pad {
             lines.push(Line::from(""));
@@ -286,22 +461,28 @@ fn draw_splash(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(
-            "  Ctrl+P ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("open folder   ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "Ctrl+X ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("quit", Style::default().fg(Color::DarkGray)),
-    ]));
+    lines.push(Line::from(""));
+
+    // Keybind hints
+    let keybinds: Vec<(&str, &str)> = vec![
+        ("^P", "Command Palette"),
+        ("^T", "New Tab"),
+        ("^G", "Toggle Git Panel"),
+        ("^B", "Toggle File Browser"),
+        ("^X", "Quit"),
+    ];
+
+    for (key, label) in &keybinds {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:>4} ", key),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(*label, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
 
     let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
     frame.render_widget(paragraph, area);
@@ -336,10 +517,8 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, _is_narrow: bool) {
         app.session_manager.active_index
     };
 
-    // Consistent tab bar: bottom border only, no title, dark background
     let block = Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::Rgb(60, 60, 60)));
+        .borders(Borders::NONE);
 
     let divider = " ";
     let divider_w = divider.width();
@@ -511,30 +690,15 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     app.output_width = inner_width;
     app.output_height = inner_height;
 
-    let text = app
-        .claude_output
-        .as_bytes()
-        .to_vec()
-        .into_text()
-        .unwrap_or_else(|_| Text::raw(&app.claude_output));
-
-    let total_lines = text.lines.len() as u16;
-    let max_scroll_back = total_lines.saturating_sub(inner_height);
-
-    if app.scroll_offset > max_scroll_back {
-        app.scroll_offset = max_scroll_back;
-    }
-
-    let top_offset = if app.follow_mode {
-        max_scroll_back
+    let base_title = if app.pty_title.is_empty() {
+        "Terminal".to_string()
     } else {
-        max_scroll_back.saturating_sub(app.scroll_offset)
+        app.pty_title.clone()
     };
-
     let title = if app.is_typing() {
-        " Output ● ".to_string()
+        format!(" {} ● ", base_title)
     } else {
-        " Output ".to_string()
+        format!(" {} ", base_title)
     };
 
     let block = if is_narrow {
@@ -543,12 +707,68 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
         focused_block(&title, is_focused)
     };
 
-    let paragraph = Paragraph::new(text).block(block).scroll((top_offset, 0));
-    frame.render_widget(paragraph, area);
+    // Use vt100 parser for proper terminal rendering
+    if let Some(parser) = &mut app.pty_parser {
+        let screen = parser.screen_mut();
+        let (_rows, _cols) = screen.size();
 
-    // Render scrollbar on output
-    let scroll_pos = max_scroll_back.saturating_sub(app.scroll_offset.min(max_scroll_back));
-    render_scrollbar(frame, area, is_narrow, scroll_pos, max_scroll_back);
+        // Get max scrollback available
+        screen.set_scrollback(usize::MAX);
+        let max_scrollback = screen.scrollback() as u16;
+
+        // Set desired scroll position
+        if app.follow_mode {
+            screen.set_scrollback(0);
+        } else {
+            if app.scroll_offset > max_scrollback {
+                app.scroll_offset = max_scrollback;
+            }
+            screen.set_scrollback(app.scroll_offset as usize);
+        }
+
+        // Build ratatui Text directly from vt100 cell data
+        let text = vt100_screen_to_text(screen, app.selection.as_ref());
+
+        let paragraph = Paragraph::new(text).block(block);
+        frame.render_widget(paragraph, area);
+
+        // Scrollbar
+        if max_scrollback > 0 {
+            let scroll_pos = if app.follow_mode {
+                max_scrollback
+            } else {
+                max_scrollback.saturating_sub(app.scroll_offset)
+            };
+            render_scrollbar(frame, area, is_narrow, scroll_pos, max_scrollback, is_focused);
+        }
+    } else {
+        // Fallback: raw output with ansi_to_tui (before parser is initialized)
+        let text = app
+            .claude_output
+            .as_bytes()
+            .to_vec()
+            .into_text()
+            .unwrap_or_else(|_| Text::raw(&app.claude_output));
+
+        let total_lines = text.lines.len() as u16;
+        let max_scroll_back = total_lines.saturating_sub(inner_height);
+
+        if app.scroll_offset > max_scroll_back {
+            app.scroll_offset = max_scroll_back;
+        }
+
+        let top_offset = if app.follow_mode {
+            max_scroll_back
+        } else {
+            max_scroll_back.saturating_sub(app.scroll_offset)
+        };
+
+        let paragraph = Paragraph::new(text).block(block).scroll((top_offset, 0));
+        frame.render_widget(paragraph, area);
+
+        let scroll_pos = max_scroll_back.saturating_sub(app.scroll_offset.min(max_scroll_back));
+        render_scrollbar(frame, area, is_narrow, scroll_pos, max_scroll_back, is_focused);
+    }
 }
 
 fn draw_right_panel(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
@@ -556,6 +776,9 @@ fn draw_right_panel(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
+
+    app.git_status_area = chunks[0];
+    app.git_log_area = chunks[1];
 
     draw_git_status(frame, app, chunks[0], is_narrow);
     draw_git_log(frame, app, chunks[1], is_narrow);
@@ -578,9 +801,25 @@ fn git_panel_block<'a>(title: &'a str, is_focused: bool, is_narrow: bool) -> Blo
 }
 
 fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
-    let is_focused = app.focus == FocusPanel::GitPanel;
+    let is_focused = app.focus == FocusPanel::GitStatus;
     let border_w: u16 = if is_narrow { 0 } else { 2 };
     let inner_width = area.width.saturating_sub(border_w) as usize;
+
+    // Not a git repo — show empty state
+    if app.git_branch.is_empty() {
+        let title = " Status ".to_string();
+        let block = git_panel_block(&title, is_focused, is_narrow);
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                " Not a git repository",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let paragraph = Paragraph::new(lines).block(block);
+        frame.render_widget(paragraph, area);
+        return;
+    }
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -722,13 +961,22 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
     frame.render_widget(paragraph, area);
 
     // Render scrollbar
-    render_scrollbar(frame, area, is_narrow, app.git_status_scroll, max_scroll);
+    render_scrollbar(frame, area, is_narrow, app.git_status_scroll, max_scroll, is_focused);
 }
 
 fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
-    let is_focused = app.focus == FocusPanel::GitPanel;
+    let is_focused = app.focus == FocusPanel::GitLog;
     let border_w: u16 = if is_narrow { 0 } else { 2 };
     let inner_width = area.width.saturating_sub(border_w) as usize;
+
+    // Not a git repo — show empty state
+    if app.git_branch.is_empty() {
+        let title = " Log ".to_string();
+        let block = git_panel_block(&title, is_focused, is_narrow);
+        let paragraph = Paragraph::new("").block(block);
+        frame.render_widget(paragraph, area);
+        return;
+    }
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -813,57 +1061,73 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
         if remainder.starts_with('(') {
             if let Some(close) = remainder.find(')') {
                 let decoration = &remainder[1..close];
-                spans.push(Span::styled(" [", Style::default().fg(Color::DarkGray)));
 
-                for (j, ref_name) in decoration.split(", ").enumerate() {
-                    if j > 0 {
-                        spans.push(Span::styled(", ", Style::default().fg(Color::DarkGray)));
-                    }
+                // Render each ref as a distinct pill/badge
+                for ref_name in decoration.split(", ") {
                     let ref_name = ref_name.trim();
-                    if ref_name.starts_with("HEAD") {
+                    spans.push(Span::raw(" "));
+                    if ref_name == "HEAD" || ref_name.starts_with("HEAD ->") {
+                        // HEAD indicator - bright cyan bg pill
                         spans.push(Span::styled(
-                            ref_name.to_string(),
+                            format!(" {} ", ref_name),
                             Style::default()
-                                .fg(Color::Cyan)
+                                .fg(Color::Black)
+                                .bg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
                         ));
                     } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/")
                     {
+                        // Remote branch - red pill (marks what's pushed)
                         spans.push(Span::styled(
-                            ref_name.to_string(),
-                            Style::default().fg(Color::Red),
+                            format!(" {} ", ref_name),
+                            Style::default()
+                                .fg(Color::White)
+                                .bg(Color::Rgb(120, 40, 40)),
                         ));
                     } else if ref_name.starts_with("tag:") {
+                        // Tag - magenta pill
                         spans.push(Span::styled(
-                            ref_name.to_string(),
+                            format!(" {} ", ref_name),
                             Style::default()
-                                .fg(Color::Magenta)
+                                .fg(Color::White)
+                                .bg(Color::Rgb(100, 40, 100))
                                 .add_modifier(Modifier::BOLD),
                         ));
                     } else {
+                        // Local branch - green pill
                         spans.push(Span::styled(
-                            ref_name.to_string(),
+                            format!(" {} ", ref_name),
                             Style::default()
-                                .fg(Color::Green)
+                                .fg(Color::Black)
+                                .bg(Color::Green)
                                 .add_modifier(Modifier::BOLD),
                         ));
                     }
                 }
-                spans.push(Span::styled("] ", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::raw(" "));
 
                 let after_dec = &remainder[close + 1..].trim_start();
                 if let Some(time_start) = after_dec.rfind('(') {
                     let msg = &after_dec[..time_start].trim_end();
                     let time_raw = &after_dec[time_start + 1..];
                     let time_clean = time_raw.trim_end_matches(')');
-                    // Truncate message if needed to fit time
-                    let msg_str = truncate_str(msg, inner_width.saturating_sub(graph_part.width() + hash.len() + 20));
+                    let time_str = format!(" {}", time_clean);
+                    let used_w: usize = spans.iter().map(|s| s.content.width()).sum();
+                    let avail_msg = inner_width.saturating_sub(used_w + time_str.width() + 1);
+                    let msg_str = truncate_str(msg, avail_msg);
+                    let msg_w = msg_str.width();
                     spans.push(Span::styled(
                         msg_str,
                         Style::default().fg(Color::White),
                     ));
+                    // Pad to right-align time
+                    let total_used = used_w + msg_w + time_str.width();
+                    let pad = inner_width.saturating_sub(total_used);
+                    if pad > 0 {
+                        spans.push(Span::raw(" ".repeat(pad)));
+                    }
                     spans.push(Span::styled(
-                        format!("  {}", time_clean),
+                        time_str,
                         Style::default().fg(Color::DarkGray),
                     ));
                 } else {
@@ -884,13 +1148,24 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                 let msg = &remainder[..time_start].trim_end();
                 let time_raw = &remainder[time_start + 1..];
                 let time_clean = time_raw.trim_end_matches(')');
-                let msg_str = truncate_str(msg, inner_width.saturating_sub(graph_part.width() + hash.len() + 15));
+                let time_str = format!(" {}", time_clean);
+                let used_w: usize = spans.iter().map(|s| s.content.width()).sum();
+                let avail_msg = inner_width.saturating_sub(used_w + time_str.width() + 2);
+                let msg_str = truncate_str(msg, avail_msg);
+                let msg_span = format!(" {}", msg_str);
+                let msg_w = msg_span.width();
                 spans.push(Span::styled(
-                    format!(" {}", msg_str),
+                    msg_span,
                     Style::default().fg(Color::White),
                 ));
+                // Pad to right-align time
+                let total_used = used_w + msg_w + time_str.width();
+                let pad = inner_width.saturating_sub(total_used);
+                if pad > 0 {
+                    spans.push(Span::raw(" ".repeat(pad)));
+                }
                 spans.push(Span::styled(
-                    format!("  {}", time_clean),
+                    time_str,
                     Style::default().fg(Color::DarkGray),
                 ));
             } else {
@@ -927,7 +1202,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     frame.render_widget(paragraph, area);
 
     // Render scrollbar
-    render_scrollbar(frame, area, is_narrow, app.git_log_scroll, max_scroll);
+    render_scrollbar(frame, area, is_narrow, app.git_log_scroll, max_scroll, is_focused);
 }
 
 /// Truncate a string to fit within max_width, adding "..." if truncated.
@@ -992,24 +1267,12 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 .bg(Color::Rgb(40, 40, 40))
                 .add_modifier(Modifier::BOLD),
         ));
-        if behind > 0 || ahead > 0 {
-            let mut sync = String::new();
-            if ahead > 0 {
-                sync.push_str(&format!("↑{}", ahead));
-            }
-            if behind > 0 {
-                if !sync.is_empty() {
-                    sync.push(' ');
-                }
-                sync.push_str(&format!("↓{}", behind));
-            }
-            spans.push(Span::styled(
-                format!(" {} ", sync),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .bg(Color::Rgb(40, 40, 40)),
-            ));
-        }
+        spans.push(Span::styled(
+            format!(" ↓{} ↑{} ", behind, ahead),
+            Style::default()
+                .fg(Color::Yellow)
+                .bg(Color::Rgb(40, 40, 40)),
+        ));
         if added > 0 || deleted > 0 {
             spans.push(Span::styled(
                 format!(" +{}", added),
@@ -1032,35 +1295,35 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         if app.session_manager.sessions.is_empty() {
             vec![
                 hint_key("^P"),
-                hint_label("commands "),
+                hint_label(" commands "),
                 hint_key("^X"),
-                hint_label("exit "),
+                hint_label(" exit "),
             ]
         } else {
             vec![
                 hint_key("^P"),
-                hint_label("commands "),
+                hint_label(" commands "),
                 hint_key("^X"),
-                hint_label("exit "),
+                hint_label(" exit "),
             ]
         }
-    } else if app.focus == FocusPanel::GitPanel && app.show_right_panel {
+    } else if matches!(app.focus, FocusPanel::GitStatus | FocusPanel::GitLog) && app.show_right_panel {
         vec![
             hint_key("^G"),
-            hint_label("back "),
+            hint_label(" back "),
             hint_key("^X"),
-            hint_label("exit "),
+            hint_label(" exit "),
         ]
     } else {
         vec![
             hint_key("^P"),
-            hint_label("commands "),
+            hint_label(" commands "),
             hint_key("^B"),
-            hint_label("files "),
+            hint_label(" files "),
             hint_key("^G"),
-            hint_label("git "),
+            hint_label(" git "),
             hint_key("^X"),
-            hint_label("exit "),
+            hint_label(" exit "),
         ]
     };
 
@@ -1161,19 +1424,7 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
     let y = (area.height.saturating_sub(dialog_height)) / 2;
     let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
 
-    // Solid background clear
-    let clear_lines: Vec<Line> = (0..dialog_height)
-        .map(|_| {
-            Line::from(Span::styled(
-                " ".repeat(dialog_width as usize),
-                Style::default().bg(Color::Black),
-            ))
-        })
-        .collect();
-    frame.render_widget(
-        Paragraph::new(clear_lines).style(Style::default().bg(Color::Black)),
-        dialog_area,
-    );
+    frame.render_widget(ratatui::widgets::Clear, dialog_area);
 
     let text = vec![
         Line::from(""),
@@ -1186,6 +1437,7 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
     let paragraph = Paragraph::new(text).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(FOCUSED_BORDER))
             .title(Span::styled(
                 " Confirm ",
@@ -1206,50 +1458,34 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
     let y = area.height.min(3); // Position near top like VS Code
     let dialog_area = Rect::new(x, y, dialog_width, dialog_height);
 
-    // Clear background
-    let clear_lines: Vec<Line> = (0..dialog_height)
-        .map(|_| {
-            Line::from(Span::styled(
-                " ".repeat(dialog_width as usize),
-                Style::default().bg(Color::Rgb(30, 30, 30)),
-            ))
-        })
-        .collect();
-    frame.render_widget(
-        Paragraph::new(clear_lines).style(Style::default().bg(Color::Rgb(30, 30, 30))),
-        dialog_area,
-    );
+    // Clear underlying cells so nothing bleeds through on close
+    frame.render_widget(ratatui::widgets::Clear, dialog_area);
 
     let inner_height = dialog_height.saturating_sub(2) as usize;
 
-    // Use the command palette if it's open, otherwise use the picker (legacy)
-    let (filter, selected, items): (&str, usize, Vec<(String, Option<&str>)>) =
-        if app.show_command_palette {
-            let palette_items = app.command_palette_items();
-            let items: Vec<(String, Option<&str>)> = palette_items
-                .iter()
-                .map(|i| {
-                    let kind = match &i.kind {
-                        crate::app::PaletteKind::OpenFolder => Some("folder"),
-                        crate::app::PaletteKind::OpenProject(_) => Some("project"),
-                        crate::app::PaletteKind::NewTerminal => Some("terminal"),
-                        crate::app::PaletteKind::ToggleGit => Some("panel"),
-                        crate::app::PaletteKind::ToggleFileBrowser => Some("panel"),
-                    };
-                    (i.label.clone(), kind)
-                })
-                .collect();
-            (
-                &app.command_palette_filter,
-                app.command_palette_selected,
-                items,
-            )
-        } else {
-            let filtered = app.filtered_projects();
-            let items: Vec<(String, Option<&str>)> =
-                filtered.iter().map(|p| (p.clone(), Some("project"))).collect();
-            (&app.picker_filter, app.picker_selected, items)
-        };
+    let palette_items = if app.show_command_palette {
+        app.command_palette_items()
+    } else {
+        let filtered = app.filtered_projects();
+        filtered
+            .iter()
+            .map(|p| crate::app::PaletteItem {
+                label: p.clone(),
+                subtitle: String::new(),
+                kind: crate::app::PaletteKind::OpenProject(p.clone()),
+            })
+            .collect()
+    };
+    let filter = if app.show_command_palette {
+        &app.command_palette_filter
+    } else {
+        &app.picker_filter
+    };
+    let selected = if app.show_command_palette {
+        app.command_palette_selected
+    } else {
+        app.picker_selected
+    };
 
     let mut lines = vec![Line::from(vec![
         Span::styled(" > ", Style::default().fg(Color::Cyan)),
@@ -1265,6 +1501,7 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ])];
 
+    let inner_w = dialog_width.saturating_sub(2) as usize;
     let visible_slots = inner_height.saturating_sub(1);
     let scroll_start = if selected >= visible_slots {
         selected - visible_slots + 1
@@ -1272,7 +1509,7 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
         0
     };
 
-    for (i, (label, kind)) in items
+    for (i, item) in palette_items
         .iter()
         .enumerate()
         .skip(scroll_start)
@@ -1285,34 +1522,67 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
             Color::Rgb(30, 30, 30)
         };
 
+        let kind_str = match &item.kind {
+            crate::app::PaletteKind::OpenFolder => "folder",
+            crate::app::PaletteKind::OpenProject(_) => "project",
+            crate::app::PaletteKind::NewTerminal => "command",
+            crate::app::PaletteKind::ToggleGit => "command",
+            crate::app::PaletteKind::ToggleFileBrowser => "command",
+            crate::app::PaletteKind::ProjectFile(_) => "file",
+        };
+
+        let prefix = if is_sel { " > " } else { "   " };
+        let prefix_w = prefix.width();
+        let label_w = item.label.width();
+        let kind_w = kind_str.width();
+
         let mut spans = Vec::new();
         spans.push(Span::styled(
-            if is_sel { " > " } else { "   " },
+            prefix,
             Style::default().fg(Color::Cyan).bg(bg),
         ));
         spans.push(Span::styled(
-            label.clone(),
+            item.label.clone(),
             Style::default()
                 .fg(if is_sel { Color::White } else { Color::Rgb(200, 200, 200) })
                 .bg(bg)
                 .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
         ));
 
-        if let Some(k) = kind {
-            spans.push(Span::styled(
-                format!("  {}", k),
-                Style::default().fg(Color::DarkGray).bg(bg),
-            ));
+        // Show subtitle (file path) in dim
+        let mut used = prefix_w + label_w;
+        if !item.subtitle.is_empty() {
+            let sub = format!("  {}", item.subtitle);
+            let sub_w = sub.width();
+            // Truncate subtitle if needed to leave room for kind
+            let avail = inner_w.saturating_sub(used + kind_w + 2);
+            if avail > 4 {
+                let display = truncate_str(&sub, avail);
+                used += display.width();
+                spans.push(Span::styled(
+                    display,
+                    Style::default().fg(Color::Rgb(100, 100, 100)).bg(bg),
+                ));
+            } else {
+                let _ = sub_w; // not enough room
+            }
         }
 
-        // Fill rest of line with background
-        let line_w: usize = spans.iter().map(|s| s.content.width()).sum();
-        let pad = (dialog_width.saturating_sub(2) as usize).saturating_sub(line_w);
+        // Right-align the kind label
+        let pad = inner_w.saturating_sub(used + kind_w);
         if pad > 0 {
-            spans.push(Span::styled(
-                " ".repeat(pad),
-                Style::default().bg(bg),
-            ));
+            spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+        }
+        spans.push(Span::styled(
+            kind_str,
+            Style::default().fg(Color::DarkGray).bg(bg),
+        ));
+
+        // Fill any remaining space
+        let final_w: usize = spans.iter().map(|s| s.content.width()).sum();
+        let end_pad = inner_w.saturating_sub(final_w);
+        if end_pad > 0 {
+            spans.push(Span::styled(" ".repeat(end_pad), Style::default().bg(bg)));
         }
 
         lines.push(Line::from(spans));
@@ -1327,6 +1597,7 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Rgb(80, 80, 120)))
             .title(Span::styled(
                 title,
@@ -1346,6 +1617,7 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
     let block = if is_narrow {
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Rgb(60, 60, 60)))
             .style(Style::default().bg(Color::Rgb(25, 25, 25)))
     } else {
@@ -1353,6 +1625,7 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
     };
 
     let inner_height = area.height.saturating_sub(2) as usize;
+    let inner_width = area.width.saturating_sub(3) as usize; // borders + scrollbar
     let mut lines: Vec<Line> = Vec::new();
 
     if app.file_browser.entries.is_empty() {
@@ -1372,6 +1645,11 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
             .take(inner_height)
         {
             let is_sel = i == app.file_browser.selected;
+            let is_open = app
+                .viewing_file
+                .as_ref()
+                .map(|p| entry.path == std::path::Path::new(p))
+                .unwrap_or(false);
             let indent = "  ".repeat(entry.depth);
             let icon = if entry.is_dir {
                 if entry.expanded {
@@ -1383,59 +1661,95 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                 "  "
             };
 
-            let bg = if is_sel {
-                Color::Rgb(60, 60, 80)
+            let name_color = if entry.is_ignored {
+                Color::Rgb(100, 100, 100)
             } else {
-                Color::Rgb(25, 25, 25)
-            };
-
-            let name_color = match entry.git_status {
-                Some('A') => Color::Green,
-                Some('M') => Color::Yellow,
-                Some('D') => Color::Red,
-                Some('?') => Color::DarkGray,
-                _ => {
-                    if entry.is_dir {
-                        Color::Rgb(200, 200, 200)
-                    } else {
-                        Color::Rgb(180, 180, 180)
+                match entry.git_status {
+                    Some('A') => Color::Green,
+                    Some('M') => Color::Yellow,
+                    Some('D') => Color::Red,
+                    Some('?') => Color::DarkGray,
+                    _ => {
+                        if entry.is_dir {
+                            Color::Rgb(200, 200, 200)
+                        } else {
+                            Color::Rgb(180, 180, 180)
+                        }
                     }
                 }
             };
 
+            // Background: open file > selected > transparent
+            let row_bg = if is_open {
+                Color::Rgb(30, 60, 120)
+            } else if is_sel {
+                Color::Rgb(55, 55, 85)
+            } else {
+                Color::Reset
+            };
+
+            let has_bg = row_bg != Color::Reset;
             let mut spans = vec![
                 Span::styled(
                     format!(" {}{}", indent, icon),
-                    Style::default().fg(Color::Rgb(100, 100, 100)).bg(bg),
+                    if has_bg {
+                        Style::default().fg(Color::Rgb(100, 100, 100)).bg(row_bg)
+                    } else {
+                        Style::default().fg(Color::Rgb(100, 100, 100))
+                    },
                 ),
                 Span::styled(
                     &entry.name,
-                    Style::default()
-                        .fg(name_color)
-                        .bg(bg)
-                        .add_modifier(if entry.is_dir {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
+                    {
+                        let mut s = Style::default()
+                            .fg(name_color)
+                            .add_modifier(if entry.is_dir {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            });
+                        if has_bg {
+                            s = s.bg(row_bg);
+                        }
+                        s
+                    },
                 ),
             ];
 
+            // Calculate used width so far (use display width, not byte length)
+            let prefix_str = format!(" {}{}", indent, icon);
+            let prefix_w = prefix_str.width();
+            let name_w = entry.name.width();
+            let used_w = prefix_w + name_w;
+
             // Git status indicator on the right
-            if let Some(status) = entry.git_status {
-                let (ch, color) = match status {
-                    'A' => ("A", Color::Green),
-                    'M' => ("M", Color::Yellow),
-                    'D' => ("D", Color::Red),
-                    '?' => ("U", Color::DarkGray),
-                    _ => ("", Color::DarkGray),
-                };
-                if !ch.is_empty() {
-                    spans.push(Span::styled(
-                        format!(" {}", ch),
-                        Style::default().fg(color).bg(bg),
-                    ));
-                }
+            let status_str = match entry.git_status {
+                Some('A') => Some(("A", Color::Green)),
+                Some('M') => Some(("M", Color::Yellow)),
+                Some('D') => Some(("D", Color::Red)),
+                Some('?') => Some(("U", Color::DarkGray)),
+                _ => None,
+            };
+
+            let status_w = if status_str.is_some() { 2 } else { 0 };
+            let pad = inner_width.saturating_sub(used_w + status_w);
+
+            if pad > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(pad),
+                    if has_bg { Style::default().bg(row_bg) } else { Style::default() },
+                ));
+            }
+
+            if let Some((ch, color)) = status_str {
+                spans.push(Span::styled(
+                    format!("{} ", ch),
+                    if has_bg {
+                        Style::default().fg(color).bg(row_bg)
+                    } else {
+                        Style::default().fg(color)
+                    },
+                ));
             }
 
             lines.push(Line::from(spans));
@@ -1450,13 +1764,15 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
     let visible = inner_height as u16;
     let max_scroll = total.saturating_sub(visible);
     if max_scroll > 0 {
-        render_scrollbar(frame, area, is_narrow, app.file_browser.scroll_offset, max_scroll);
+        render_scrollbar(frame, area, is_narrow, app.file_browser.scroll_offset, max_scroll, is_focused);
     }
 }
 
 fn draw_file_viewer(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
-    let title = if let Some(ref path) = app.viewing_file {
-        let name = std::path::Path::new(path)
+    let is_focused = app.focus == FocusPanel::FileViewer;
+    let file_path = app.viewing_file.as_deref().unwrap_or("");
+    let title = if !file_path.is_empty() {
+        let name = std::path::Path::new(file_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file");
@@ -1474,32 +1790,67 @@ fn draw_file_viewer(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
                 Style::default().fg(Color::Cyan),
             ))
     } else {
-        focused_block(&title, app.focus == FocusPanel::Output)
+        focused_block(&title, is_focused)
     };
 
     let inner_height = area.height.saturating_sub(2);
-
-    let mut lines: Vec<Line> = Vec::new();
-    for (i, line) in app.file_content.lines().enumerate() {
-        let line_num = format!("{:>4} ", i + 1);
-        lines.push(Line::from(vec![
-            Span::styled(
-                line_num,
-                Style::default().fg(Color::Rgb(80, 80, 80)),
-            ),
-            Span::styled(line.to_string(), Style::default().fg(Color::Rgb(200, 200, 200))),
-        ]));
-    }
-
-    let total = lines.len() as u16;
-    let max_scroll = total.saturating_sub(inner_height);
+    let total_lines = app.file_highlighted.len().max(app.file_content.lines().count());
+    let max_scroll = (total_lines as u16).saturating_sub(inner_height);
     let scroll = app.file_scroll.min(max_scroll);
 
+    // Only build Line objects for the visible range
+    let visible_start = scroll as usize;
+    let visible_end = (visible_start + inner_height as usize).min(total_lines);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(visible_end - visible_start);
+    for i in visible_start..visible_end {
+        let line_num = format!("{:>4} ", i + 1);
+        let mut spans = vec![Span::styled(
+            line_num,
+            Style::default().fg(Color::Rgb(80, 80, 80)),
+        )];
+
+        if let Some(ranges) = app.file_highlighted.get(i) {
+            for (style, text) in ranges {
+                spans.push(Span::styled(text.clone(), syntect_to_ratatui(*style)));
+            }
+        } else if let Some(text_line) = app.file_content.lines().nth(i) {
+            spans.push(Span::styled(
+                text_line.to_string(),
+                Style::default().fg(Color::Rgb(200, 200, 200)),
+            ));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    // No ratatui scroll needed — we already sliced to the visible window
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .scroll((scroll, 0));
+        .scroll((0, app.file_scroll_h));
 
     frame.render_widget(paragraph, area);
 
-    render_scrollbar(frame, area, is_narrow, scroll, max_scroll);
+    render_scrollbar(frame, area, is_narrow, scroll, max_scroll, is_focused);
+}
+
+/// Convert syntect style to ratatui style.
+fn syntect_to_ratatui(style: SyntectStyle) -> Style {
+    let fg = style.foreground;
+    let mut s = Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b));
+    let bg = style.background;
+    // Only apply bg if it's not the default theme background (avoid opaque backgrounds)
+    if bg.a > 0 && (bg.r, bg.g, bg.b) != (0, 0, 0) && (bg.r, bg.g, bg.b) != (45, 45, 45) {
+        s = s.bg(Color::Rgb(bg.r, bg.g, bg.b));
+    }
+    if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+        s = s.add_modifier(Modifier::BOLD);
+    }
+    if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+        s = s.add_modifier(Modifier::ITALIC);
+    }
+    if style.font_style.contains(syntect::highlighting::FontStyle::UNDERLINE) {
+        s = s.add_modifier(Modifier::UNDERLINED);
+    }
+    s
 }
