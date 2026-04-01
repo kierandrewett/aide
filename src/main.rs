@@ -112,16 +112,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     let output_interval_idle = Duration::from_millis(200);
     let mut last_bg_check = Instant::now();
     let bg_check_interval = Duration::from_secs(2);
-    let mut last_full_repaint = Instant::now();
-    let mut frame_count: u32 = 0;
-
     loop {
-        frame_count = frame_count.wrapping_add(1);
-        if frame_count <= 3 || last_full_repaint.elapsed() >= Duration::from_secs(5) {
-            terminal.swap_buffers();
-            last_full_repaint = Instant::now();
-        }
-
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         // Resize PTY and vt100 parser to match our viewport if changed

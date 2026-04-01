@@ -214,6 +214,12 @@ fn render_scrollbar(
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
+
+    // Clear all cells in the frame buffer to prevent stale artifacts.
+    // This is cheap — it only resets ratatui's in-memory buffer, not the terminal.
+    // Ratatui's diff algorithm then sends only the cells that actually changed.
+    frame.render_widget(ratatui::widgets::Clear, size);
+
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = 2;
