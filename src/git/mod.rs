@@ -93,7 +93,8 @@ pub fn diff_stats(directory: &str) -> Option<(usize, usize)> {
 
 /// Get per-file diff stats (filename -> (added, deleted)) for working tree + staged.
 pub fn file_diff_stats(directory: &str) -> std::collections::HashMap<String, (usize, usize)> {
-    let mut stats: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+    let mut stats: std::collections::HashMap<String, (usize, usize)> =
+        std::collections::HashMap::new();
 
     // Working tree changes
     if let Ok(output) = Command::new("git")

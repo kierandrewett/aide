@@ -120,7 +120,9 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             code: KeyCode::Char('p'),
             modifiers,
             ..
-        } if modifiers.contains(KeyModifiers::CONTROL) && modifiers.contains(KeyModifiers::SHIFT) => {
+        } if modifiers.contains(KeyModifiers::CONTROL)
+            && modifiers.contains(KeyModifiers::SHIFT) =>
+        {
             return Action::CommandPaletteReverse
         }
         KeyEvent {
@@ -202,9 +204,7 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         {
             Action::CopySelection
         }
-        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => {
-            Action::ForwardCtrl(*c)
-        }
+        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => Action::ForwardCtrl(*c),
         // Shift+Enter sends newline
         (KeyCode::Enter, mods) if mods.contains(KeyModifiers::SHIFT) => {
             Action::ForwardSpecial("S-Enter".into())
@@ -219,12 +219,8 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         (KeyCode::Right, _) => Action::ForwardSpecial("Right".into()),
         (KeyCode::Home, _) => Action::ForwardSpecial("Home".into()),
         (KeyCode::End, _) => Action::ForwardSpecial("End".into()),
-        (KeyCode::PageUp, mods) if mods.contains(KeyModifiers::CONTROL) => {
-            Action::ScrollToTop
-        }
-        (KeyCode::PageDown, mods) if mods.contains(KeyModifiers::CONTROL) => {
-            Action::ScrollToBottom
-        }
+        (KeyCode::PageUp, mods) if mods.contains(KeyModifiers::CONTROL) => Action::ScrollToTop,
+        (KeyCode::PageDown, mods) if mods.contains(KeyModifiers::CONTROL) => Action::ScrollToBottom,
         (KeyCode::PageUp, _) => Action::ScrollUp(0, 0),
         (KeyCode::PageDown, _) => Action::ScrollDown(0, 0),
         (KeyCode::Delete, _) => Action::ForwardSpecial("DC".into()),

@@ -42,9 +42,7 @@ impl DaemonClient {
 
     fn try_connect(sock: &PathBuf) -> Result<Self> {
         let stream = UnixStream::connect(sock).context("connect to daemon")?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .ok();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
         let reader = BufReader::new(stream.try_clone()?);
         let mut client = Self { stream, reader };
 
@@ -57,10 +55,7 @@ impl DaemonClient {
     }
 
     fn spawn_daemon() -> Result<()> {
-        let sock_dir = protocol::socket_path()
-            .parent()
-            .unwrap()
-            .to_path_buf();
+        let sock_dir = protocol::socket_path().parent().unwrap().to_path_buf();
         std::fs::create_dir_all(&sock_dir)?;
 
         // Find our own binary path to locate aide-daemon
@@ -150,7 +145,11 @@ impl DaemonClient {
         }
     }
 
-    pub fn read_output(&mut self, session_id: &str, since_offset: usize) -> Result<(Vec<u8>, usize)> {
+    pub fn read_output(
+        &mut self,
+        session_id: &str,
+        since_offset: usize,
+    ) -> Result<(Vec<u8>, usize)> {
         match self.send(&Request::ReadOutput {
             session_id: session_id.to_string(),
             since_offset,

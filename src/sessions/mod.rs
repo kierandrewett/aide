@@ -258,7 +258,13 @@ const TAB_ORDER_FILE: &str = "/tmp/aide-tab-order";
 /// Sanitize a name for use as a session ID (replace dots and special chars).
 fn sanitize_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 

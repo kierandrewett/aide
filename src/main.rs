@@ -436,7 +436,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                         let depth = entry.depth;
                                         while app.file_browser.selected > 0 {
                                             app.file_browser.selected -= 1;
-                                            if let Some(e) = app.file_browser.entries.get(app.file_browser.selected) {
+                                            if let Some(e) = app
+                                                .file_browser
+                                                .entries
+                                                .get(app.file_browser.selected)
+                                            {
                                                 if e.depth < depth && e.is_dir {
                                                     break;
                                                 }
@@ -448,9 +452,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             _ => {}
                         }
                     } else if app.focus == app::FocusPanel::FileViewer {
-                        let total = app.file_highlighted.len().max(
-                            app.file_content.lines().count(),
-                        ) as u16;
+                        let total = app
+                            .file_highlighted
+                            .len()
+                            .max(app.file_content.lines().count())
+                            as u16;
                         let visible = app.file_viewer_area.height.saturating_sub(2);
                         let max_v = total.saturating_sub(visible);
                         match key.as_str() {
@@ -458,7 +464,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                 app.file_scroll_h = app.file_scroll_h.saturating_sub(4);
                             }
                             "Right" => {
-                                app.file_scroll_h = app.file_scroll_h
+                                app.file_scroll_h = app
+                                    .file_scroll_h
                                     .saturating_add(4)
                                     .min(app.file_max_scroll_h);
                             }
@@ -518,7 +525,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.close_file();
                         app.focus = app::FocusPanel::Output;
                         last_resize = (0, 0);
-                    } else if matches!(app.focus, app::FocusPanel::GitStatus | app::FocusPanel::GitLog) {
+                    } else if matches!(
+                        app.focus,
+                        app::FocusPanel::GitStatus | app::FocusPanel::GitLog
+                    ) {
                         let size = terminal.size().unwrap_or_default();
                         if size.width < 100 {
                             app.show_right_panel = false;
@@ -564,9 +574,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                 .min(max_scroll);
                         }
                         ScrollPanel::FileViewer => {
-                            let total = app.file_highlighted.len().max(
-                                app.file_content.lines().count(),
-                            ) as u16;
+                            let total = app
+                                .file_highlighted
+                                .len()
+                                .max(app.file_content.lines().count())
+                                as u16;
                             let visible = app.file_viewer_area.height.saturating_sub(2);
                             let max_scroll = total.saturating_sub(visible);
                             app.file_scroll = app.file_scroll.saturating_add(1).min(max_scroll);
@@ -599,7 +611,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 Action::ScrollRight(mx, my) => {
                     let target = scroll_target(&app, mx, my);
                     if matches!(target, ScrollPanel::FileViewer) {
-                        app.file_scroll_h = app.file_scroll_h
+                        app.file_scroll_h = app
+                            .file_scroll_h
                             .saturating_add(4)
                             .min(app.file_max_scroll_h);
                     }
@@ -640,9 +653,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             app.file_browser.scroll_offset = total.saturating_sub(visible);
                         }
                         app::FocusPanel::FileViewer => {
-                            let total = app.file_highlighted.len().max(
-                                app.file_content.lines().count(),
-                            ) as u16;
+                            let total = app
+                                .file_highlighted
+                                .len()
+                                .max(app.file_content.lines().count())
+                                as u16;
                             let visible = app.file_viewer_area.height.saturating_sub(2);
                             app.file_scroll = total.saturating_sub(visible);
                         }
@@ -665,8 +680,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         for &(x_start, x_end, tab_idx) in &app.tab_click_zones {
                             if mx >= x_start && mx < x_end {
                                 let total_tabs = app.session_manager.sessions.len()
-                                    + if app.show_welcome
-                                        || app.session_manager.sessions.is_empty()
+                                    + if app.show_welcome || app.session_manager.sessions.is_empty()
                                     {
                                         1
                                     } else {
@@ -729,8 +743,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         let gutter_w: u16 = 5;
                         let rel_col = mx.saturating_sub(app.file_viewer_area.x + border + gutter_w)
                             + app.file_scroll_h;
-                        let rel_row = my.saturating_sub(app.file_viewer_area.y + border)
-                            + app.file_scroll;
+                        let rel_row =
+                            my.saturating_sub(app.file_viewer_area.y + border) + app.file_scroll;
                         app.selection = None;
                         app.file_selection = Some(app::TextSelection {
                             start_col: rel_col,
@@ -786,7 +800,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         if sel.active {
                             let border = if app.is_narrow { 0u16 } else { 1 };
                             let gutter_w: u16 = 5;
-                            sel.end_col = mx.saturating_sub(app.file_viewer_area.x + border + gutter_w)
+                            sel.end_col = mx
+                                .saturating_sub(app.file_viewer_area.x + border + gutter_w)
                                 + app.file_scroll_h;
                             sel.end_row = my.saturating_sub(app.file_viewer_area.y + border)
                                 + app.file_scroll;
@@ -843,7 +858,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         // response. Reading too early captures partial escape sequences,
         // causing visual artifacts (e.g. garbled text when holding
         // backspace). The 33ms active-refresh interval handles it.
-
 
         if app.should_quit {
             break;
@@ -954,7 +968,11 @@ fn extract_file_selection(content: &str, sel: &app::TextSelection) -> String {
         let chars: Vec<char> = line.chars().collect();
         let line_len = chars.len() as u16;
         let col_start = if row == sr { sc.min(line_len) } else { 0 };
-        let col_end = if row == er { ec.min(line_len) } else { line_len };
+        let col_end = if row == er {
+            ec.min(line_len)
+        } else {
+            line_len
+        };
         let selected: String = chars
             .iter()
             .skip(col_start as usize)
@@ -983,7 +1001,11 @@ fn extract_selection(screen: &vt100::Screen, sel: &app::TextSelection) -> String
     let mut result = String::new();
     for row in sr..=er.min(rows.saturating_sub(1)) {
         let col_start = if row == sr { sc } else { 0 };
-        let col_end = if row == er { ec } else { cols.saturating_sub(1) };
+        let col_end = if row == er {
+            ec
+        } else {
+            cols.saturating_sub(1)
+        };
         for col in col_start..=col_end.min(cols.saturating_sub(1)) {
             if let Some(cell) = screen.cell(row, col) {
                 if cell.is_wide_continuation() {
@@ -1056,12 +1078,8 @@ fn refresh_output(app: &mut App) {
         };
         let rows = app.output_height.max(24);
         let cols = app.output_width.max(80);
-        let mut parser = vt100::Parser::new_with_callbacks(
-            rows,
-            cols,
-            10000,
-            app::PtyCallbacks::default(),
-        );
+        let mut parser =
+            vt100::Parser::new_with_callbacks(rows, cols, 10000, app::PtyCallbacks::default());
         parser.process(&data);
         app.pty_parser = Some(parser);
         app.pty_session_id = session_id;
@@ -1086,12 +1104,8 @@ fn refresh_output(app: &mut App) {
             };
             let rows = app.output_height.max(24);
             let cols = app.output_width.max(80);
-            let mut parser = vt100::Parser::new_with_callbacks(
-                rows,
-                cols,
-                10000,
-                app::PtyCallbacks::default(),
-            );
+            let mut parser =
+                vt100::Parser::new_with_callbacks(rows, cols, 10000, app::PtyCallbacks::default());
             parser.process(&full_data);
             app.pty_parser = Some(parser);
             app.pty_last_len = full_offset;

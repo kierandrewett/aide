@@ -42,7 +42,11 @@ fn in_selection(sel: &crate::app::TextSelection, row: u16, col: u16, cols: u16) 
         return false;
     }
     let line_start = if row == sr { sc } else { 0 };
-    let line_end = if row == er { ec } else { cols.saturating_sub(1) };
+    let line_end = if row == er {
+        ec
+    } else {
+        cols.saturating_sub(1)
+    };
     col >= line_start && col <= line_end
 }
 
@@ -264,10 +268,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let main_body = if file_browser_width > 0 {
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(file_browser_width),
-                Constraint::Min(1),
-            ])
+            .constraints([Constraint::Length(file_browser_width), Constraint::Min(1)])
             .split(body_area);
         app.file_browser_area = h_chunks[0];
         // File browser drawn AFTER other panels (below) to prevent overlap artifacts
@@ -528,14 +529,16 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, _is_narrow: bool) {
         app.session_manager.active_index
     };
 
-    let block = Block::default()
-        .borders(Borders::NONE);
+    let block = Block::default().borders(Borders::NONE);
 
     let divider = " ";
     let divider_w = divider.width();
 
     let inner_w = area.width as usize;
-    let tab_widths: Vec<usize> = titles.iter().map(|(label, _, _)| label.width() + 2).collect();
+    let tab_widths: Vec<usize> = titles
+        .iter()
+        .map(|(label, _, _)| label.width() + 2)
+        .collect();
     let arrow_w = 2;
     let total_w: usize =
         tab_widths.iter().sum::<usize>() + titles.len().saturating_sub(1) * divider_w;
@@ -667,7 +670,8 @@ fn draw_tabs(frame: &mut Frame, app: &mut App, area: Rect, _is_narrow: bool) {
     }
 
     // Fill remaining space with background
-    let remaining = (area.width as usize).saturating_sub(cursor_x.saturating_sub(area.x) as usize + if has_right { 2 } else { 0 });
+    let remaining = (area.width as usize)
+        .saturating_sub(cursor_x.saturating_sub(area.x) as usize + if has_right { 2 } else { 0 });
     if remaining > 0 {
         spans.push(Span::styled(
             " ".repeat(remaining),
@@ -809,7 +813,14 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
             } else {
                 max_scrollback.saturating_sub(app.scroll_offset)
             };
-            render_scrollbar(frame, area, is_narrow, scroll_pos, max_scrollback, is_focused);
+            render_scrollbar(
+                frame,
+                area,
+                is_narrow,
+                scroll_pos,
+                max_scrollback,
+                is_focused,
+            );
         }
     } else {
         // Fallback: raw output with ansi_to_tui (before parser is initialized)
@@ -837,7 +848,14 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
         frame.render_widget(paragraph, area);
 
         let scroll_pos = max_scroll_back.saturating_sub(app.scroll_offset.min(max_scroll_back));
-        render_scrollbar(frame, area, is_narrow, scroll_pos, max_scroll_back, is_focused);
+        render_scrollbar(
+            frame,
+            area,
+            is_narrow,
+            scroll_pos,
+            max_scroll_back,
+            is_focused,
+        );
     }
 }
 
@@ -969,11 +987,8 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
         };
 
         // Get per-file diff stats
-        let (file_added, file_removed) = app
-            .git_file_stats
-            .get(filename)
-            .copied()
-            .unwrap_or((0, 0));
+        let (file_added, file_removed) =
+            app.git_file_stats.get(filename).copied().unwrap_or((0, 0));
 
         let added_str = format!("+{}", file_added);
         let removed_str = format!("-{}", file_removed);
@@ -1031,7 +1046,14 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
     frame.render_widget(paragraph, area);
 
     // Render scrollbar
-    render_scrollbar(frame, area, is_narrow, app.git_status_scroll, max_scroll, is_focused);
+    render_scrollbar(
+        frame,
+        area,
+        is_narrow,
+        app.git_status_scroll,
+        max_scroll,
+        is_focused,
+    );
 }
 
 fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
@@ -1145,8 +1167,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                                 .bg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
                         ));
-                    } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/")
-                    {
+                    } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/") {
                         // Remote branch - red pill (marks what's pushed)
                         spans.push(Span::styled(
                             format!(" {} ", ref_name),
@@ -1186,20 +1207,14 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                     let avail_msg = inner_width.saturating_sub(used_w + time_str.width() + 1);
                     let msg_str = truncate_str(msg, avail_msg);
                     let msg_w = msg_str.width();
-                    spans.push(Span::styled(
-                        msg_str,
-                        Style::default().fg(Color::White),
-                    ));
+                    spans.push(Span::styled(msg_str, Style::default().fg(Color::White)));
                     // Pad to right-align time
                     let total_used = used_w + msg_w + time_str.width();
                     let pad = inner_width.saturating_sub(total_used);
                     if pad > 0 {
                         spans.push(Span::raw(" ".repeat(pad)));
                     }
-                    spans.push(Span::styled(
-                        time_str,
-                        Style::default().fg(Color::DarkGray),
-                    ));
+                    spans.push(Span::styled(time_str, Style::default().fg(Color::DarkGray)));
                 } else {
                     spans.push(Span::styled(
                         after_dec.to_string(),
@@ -1224,20 +1239,14 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                 let msg_str = truncate_str(msg, avail_msg);
                 let msg_span = format!(" {}", msg_str);
                 let msg_w = msg_span.width();
-                spans.push(Span::styled(
-                    msg_span,
-                    Style::default().fg(Color::White),
-                ));
+                spans.push(Span::styled(msg_span, Style::default().fg(Color::White)));
                 // Pad to right-align time
                 let total_used = used_w + msg_w + time_str.width();
                 let pad = inner_width.saturating_sub(total_used);
                 if pad > 0 {
                     spans.push(Span::raw(" ".repeat(pad)));
                 }
-                spans.push(Span::styled(
-                    time_str,
-                    Style::default().fg(Color::DarkGray),
-                ));
+                spans.push(Span::styled(time_str, Style::default().fg(Color::DarkGray)));
             } else {
                 spans.push(Span::styled(
                     format!(" {}", remainder),
@@ -1272,7 +1281,14 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     frame.render_widget(paragraph, area);
 
     // Render scrollbar
-    render_scrollbar(frame, area, is_narrow, app.git_log_scroll, max_scroll, is_focused);
+    render_scrollbar(
+        frame,
+        area,
+        is_narrow,
+        app.git_log_scroll,
+        max_scroll,
+        is_focused,
+    );
 }
 
 /// Truncate a string to fit within max_width, adding "..." if truncated.
@@ -1346,15 +1362,11 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         if added > 0 || deleted > 0 {
             spans.push(Span::styled(
                 format!(" +{}", added),
-                Style::default()
-                    .fg(Color::Green)
-                    .bg(Color::Rgb(40, 40, 40)),
+                Style::default().fg(Color::Green).bg(Color::Rgb(40, 40, 40)),
             ));
             spans.push(Span::styled(
                 format!(" -{} ", deleted),
-                Style::default()
-                    .fg(Color::Red)
-                    .bg(Color::Rgb(40, 40, 40)),
+                Style::default().fg(Color::Red).bg(Color::Rgb(40, 40, 40)),
             ));
         }
         spans
@@ -1367,15 +1379,11 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         vec![
             Span::styled(
                 format!(" {} ", spinner_frames[idx]),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .bg(Color::Rgb(40, 40, 40)),
+                Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 40)),
             ),
             Span::styled(
                 format!("{} ", job.label),
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Rgb(40, 40, 40)),
+                Style::default().fg(Color::White).bg(Color::Rgb(40, 40, 40)),
             ),
         ]
     } else if let Some((msg, _, is_error)) = &app.status_message {
@@ -1405,7 +1413,9 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 hint_label(" exit "),
             ]
         }
-    } else if matches!(app.focus, FocusPanel::GitStatus | FocusPanel::GitLog) && app.show_right_panel {
+    } else if matches!(app.focus, FocusPanel::GitStatus | FocusPanel::GitLog)
+        && app.show_right_panel
+    {
         vec![
             hint_key("^G"),
             hint_label(" back "),
@@ -1591,10 +1601,7 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut lines = vec![Line::from(vec![
         Span::styled(" > ", Style::default().fg(Color::Cyan)),
-        Span::styled(
-            filter,
-            Style::default().fg(Color::White),
-        ),
+        Span::styled(filter, Style::default().fg(Color::White)),
         Span::styled(
             "_",
             Style::default()
@@ -1648,9 +1655,17 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(
             item.label.clone(),
             Style::default()
-                .fg(if is_sel { Color::White } else { Color::Rgb(200, 200, 200) })
+                .fg(if is_sel {
+                    Color::White
+                } else {
+                    Color::Rgb(200, 200, 200)
+                })
                 .bg(bg)
-                .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+                .add_modifier(if is_sel {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
         ));
 
         // Show subtitle (file path) in dim
@@ -1802,22 +1817,19 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                         Style::default().fg(Color::Rgb(100, 100, 100))
                     },
                 ),
-                Span::styled(
-                    &entry.name,
-                    {
-                        let mut s = Style::default()
-                            .fg(name_color)
-                            .add_modifier(if entry.is_dir {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            });
-                        if has_bg {
-                            s = s.bg(row_bg);
-                        }
-                        s
-                    },
-                ),
+                Span::styled(&entry.name, {
+                    let mut s = Style::default()
+                        .fg(name_color)
+                        .add_modifier(if entry.is_dir {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        });
+                    if has_bg {
+                        s = s.bg(row_bg);
+                    }
+                    s
+                }),
             ];
 
             // Calculate used width so far (use display width, not byte length)
@@ -1840,7 +1852,11 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                 if pad > 0 {
                     spans.push(Span::styled(
                         " ".repeat(pad),
-                        if has_bg { Style::default().bg(row_bg) } else { Style::default() },
+                        if has_bg {
+                            Style::default().bg(row_bg)
+                        } else {
+                            Style::default()
+                        },
                     ));
                 }
                 spans.push(Span::styled(
@@ -1857,7 +1873,11 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                 if pad > 0 {
                     spans.push(Span::styled(
                         " ".repeat(pad),
-                        if has_bg { Style::default().bg(row_bg) } else { Style::default() },
+                        if has_bg {
+                            Style::default().bg(row_bg)
+                        } else {
+                            Style::default()
+                        },
                     ));
                 }
             }
@@ -1874,7 +1894,14 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
     let visible = inner_height as u16;
     let max_scroll = total.saturating_sub(visible);
     if max_scroll > 0 {
-        render_scrollbar(frame, area, is_narrow, app.file_browser.scroll_offset, max_scroll, is_focused);
+        render_scrollbar(
+            frame,
+            area,
+            is_narrow,
+            app.file_browser.scroll_offset,
+            max_scroll,
+            is_focused,
+        );
     }
 }
 
@@ -1893,10 +1920,7 @@ fn render_horizontal_scrollbar(
 
     let border_left: u16 = if is_narrow { 0 } else { 1 };
     let border_right: u16 = if is_narrow { 0 } else { 1 };
-    let track_width = area
-        .width
-        .saturating_sub(border_left + border_right)
-        .max(1) as usize;
+    let track_width = area.width.saturating_sub(border_left + border_right).max(1) as usize;
     if track_width < 2 {
         return;
     }
@@ -1960,10 +1984,7 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
         Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(Color::Rgb(60, 60, 60)))
-            .title(Span::styled(
-                &title,
-                Style::default().fg(Color::Cyan),
-            ))
+            .title(Span::styled(&title, Style::default().fg(Color::Cyan)))
     } else {
         focused_block(&title, is_focused)
     };
@@ -1973,7 +1994,10 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
     frame.render_widget(block, area);
 
     let inner_height = inner.height;
-    let total_lines = app.file_highlighted.len().max(app.file_content.lines().count());
+    let total_lines = app
+        .file_highlighted
+        .len()
+        .max(app.file_content.lines().count());
     let max_scroll = (total_lines as u16).saturating_sub(inner_height);
     let scroll = app.file_scroll.min(max_scroll);
 
@@ -2084,13 +2108,22 @@ fn syntect_to_ratatui(style: SyntectStyle) -> Style {
     if bg.a > 0 && (bg.r, bg.g, bg.b) != (0, 0, 0) && (bg.r, bg.g, bg.b) != (45, 45, 45) {
         s = s.bg(Color::Rgb(bg.r, bg.g, bg.b));
     }
-    if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+    if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::BOLD)
+    {
         s = s.add_modifier(Modifier::BOLD);
     }
-    if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+    if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::ITALIC)
+    {
         s = s.add_modifier(Modifier::ITALIC);
     }
-    if style.font_style.contains(syntect::highlighting::FontStyle::UNDERLINE) {
+    if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::UNDERLINE)
+    {
         s = s.add_modifier(Modifier::UNDERLINED);
     }
     s

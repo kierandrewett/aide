@@ -55,8 +55,8 @@ impl FileBrowser {
             if let Ok(rel) = entry.path.strip_prefix(&self.root) {
                 let rel_str = rel.to_string_lossy().to_string();
                 // Check exact match or if any parent is ignored
-                entry.is_ignored = ignored.contains(&rel_str)
-                    || ignored.contains(&format!("{}/", rel_str));
+                entry.is_ignored =
+                    ignored.contains(&rel_str) || ignored.contains(&format!("{}/", rel_str));
             }
         }
     }
@@ -221,8 +221,8 @@ impl FileBrowser {
             for (i, mut child) in children.into_iter().enumerate() {
                 if let Ok(rel) = child.path.strip_prefix(&self.root) {
                     let rel_str = rel.to_string_lossy().to_string();
-                    child.is_ignored = ignored.contains(&rel_str)
-                        || ignored.contains(&format!("{}/", rel_str));
+                    child.is_ignored =
+                        ignored.contains(&rel_str) || ignored.contains(&format!("{}/", rel_str));
                 }
                 self.entries.insert(insert_pos + i, child);
             }
@@ -257,7 +257,13 @@ fn git_ignored_paths(root: &Path) -> HashSet<String> {
     // git ls-files --others --ignored --exclude-standard --directory
     // gives us ignored files/dirs relative to the repo root
     let output = Command::new("git")
-        .args(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"])
+        .args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ])
         .current_dir(root)
         .output();
     if let Ok(out) = output {

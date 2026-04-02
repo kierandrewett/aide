@@ -700,23 +700,33 @@ fn recent_project_files(dir: &str) -> Vec<(String, String, String)> {
             // Not a git repo — use find, skip hidden dirs and common junk
             let find_output = Command::new("find")
                 .args([
-                    ".", "-type", "f",
-                    "-not", "-path", "*/.*",
-                    "-not", "-path", "*/node_modules/*",
-                    "-not", "-path", "*/target/*",
-                    "-not", "-path", "*/__pycache__/*",
-                    "-not", "-path", "*/venv/*",
+                    ".",
+                    "-type",
+                    "f",
+                    "-not",
+                    "-path",
+                    "*/.*",
+                    "-not",
+                    "-path",
+                    "*/node_modules/*",
+                    "-not",
+                    "-path",
+                    "*/target/*",
+                    "-not",
+                    "-path",
+                    "*/__pycache__/*",
+                    "-not",
+                    "-path",
+                    "*/venv/*",
                 ])
                 .current_dir(dir)
                 .output();
             match find_output {
-                Ok(out) => {
-                    String::from_utf8_lossy(&out.stdout)
-                        .lines()
-                        .filter(|l| !l.is_empty())
-                        .map(|l| l.strip_prefix("./").unwrap_or(l).to_string())
-                        .collect()
-                }
+                Ok(out) => String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(|l| l.strip_prefix("./").unwrap_or(l).to_string())
+                    .collect(),
                 Err(_) => return Vec::new(),
             }
         }
@@ -757,7 +767,13 @@ fn recent_project_files(dir: &str) -> Vec<(String, String, String)> {
 /// so "git push" matches "Git: Push" and "open folder" matches "Open Folder...".
 fn normalize_for_match(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
