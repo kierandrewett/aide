@@ -2,6 +2,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -76,12 +77,25 @@ impl DaemonClient {
             })
             .unwrap_or_else(|| PathBuf::from("aide-daemon"));
 
-        Command::new(&daemon_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .context("failed to spawn aide-daemon")?;
+        unsafe {
+            Command::new(&daemon_path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .pre_exec(|| {
+                    // Close all inherited fds > 2 before exec.
+                    // The parent (aide) has the terminal on stdout and crossterm
+                    // may have /dev/tty open on higher fds. Without closing these,
+                    // daemon children (Claude Code) inherit them and write escape
+                    // sequences directly to our terminal, causing artifacts.
+                    for fd in 3..1024 {
+                        libc::close(fd);
+                    }
+                    Ok(())
+                })
+                .spawn()
+                .context("failed to spawn aide-daemon")?;
+        }
 
         Ok(())
     }

@@ -136,6 +136,23 @@ pub fn file_diff_stats(directory: &str) -> std::collections::HashMap<String, (us
     stats
 }
 
+/// List local branch names, current branch first.
+pub fn list_branches(directory: &str) -> Vec<String> {
+    let output = match Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(directory)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 /// Get push/pull counts relative to upstream.
 /// Returns (behind, ahead) or None if no upstream.
 pub fn upstream_counts(directory: &str) -> Option<(usize, usize)> {

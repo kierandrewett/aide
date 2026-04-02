@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use ansi_to_tui::IntoText;
 use syntect::highlighting::Style as SyntectStyle;
 use unicode_width::UnicodeWidthStr;
@@ -218,11 +220,6 @@ fn render_scrollbar(
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
 
-    // Clear all cells in the frame buffer to prevent stale artifacts.
-    // This is cheap — it only resets ratatui's in-memory buffer, not the terminal.
-    // Ratatui's diff algorithm then sends only the cells that actually changed.
-    frame.render_widget(ratatui::widgets::Clear, size);
-
     let is_narrow = size.width < 100;
     let status_height = if is_narrow { 2 } else { 1 };
     let tab_height: u16 = 1;
@@ -273,7 +270,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ])
             .split(body_area);
         app.file_browser_area = h_chunks[0];
-        draw_file_browser(frame, app, h_chunks[0], is_narrow);
+        // File browser drawn AFTER other panels (below) to prevent overlap artifacts
         h_chunks[1]
     } else {
         app.file_browser_area = Rect::default();
@@ -349,6 +346,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 _ => {}
             }
         }
+    }
+
+    // Draw file browser after other panels
+    if file_browser_width > 0 && !is_narrow {
+        draw_file_browser(frame, app, app.file_browser_area, is_narrow);
     }
 
     draw_status_bar(frame, app, status_area);
@@ -743,11 +745,62 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
             screen.set_scrollback(app.scroll_offset as usize);
         }
 
+        // Capture cursor state before releasing screen borrow
+        let cursor_pos = screen.cursor_position(); // (row, col)
+        let cursor_visible = !screen.hide_cursor();
+        let at_bottom = app.follow_mode || app.scroll_offset == 0;
+
         // Build ratatui Text directly from vt100 cell data
         let text = vt100_screen_to_text(screen, app.selection.as_ref());
 
         let paragraph = Paragraph::new(text).block(block);
         frame.render_widget(paragraph, area);
+
+        // Render block cursor (always visible, greyed when unfocused, blinking when focused)
+        if cursor_visible && at_bottom {
+            // While typing, keep cursor solid; otherwise blink at ~530ms
+            let recently_typed = app
+                .last_input_time
+                .map(|t| t.elapsed().as_millis() < 530)
+                .unwrap_or(false);
+            let blink_on = if is_focused {
+                if recently_typed {
+                    true
+                } else {
+                    let ms = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    (ms / 530) % 2 == 0
+                }
+            } else {
+                true // unfocused cursor is always visible (solid grey)
+            };
+
+            let border = if is_narrow { 0u16 } else { 1 };
+            let cx = area.x + border + cursor_pos.1;
+            let cy = area.y + border + cursor_pos.0;
+            if blink_on
+                && cx < area.x + area.width.saturating_sub(border)
+                && cy < area.y + area.height.saturating_sub(border)
+            {
+                let buf = frame.buffer_mut();
+                if let Some(cell) = buf.cell_mut((cx, cy)) {
+                    if is_focused {
+                        // Inverted fg/bg for focused cursor
+                        let fg = cell.fg;
+                        let bg = cell.bg;
+                        let new_fg = if bg == Color::Reset { Color::Black } else { bg };
+                        let new_bg = if fg == Color::Reset { Color::White } else { fg };
+                        cell.fg = new_fg;
+                        cell.bg = new_bg;
+                    } else {
+                        // Grey block for unfocused cursor
+                        cell.bg = Color::Rgb(100, 100, 100);
+                    }
+                }
+            }
+        }
 
         // Scrollbar
         if max_scrollback > 0 {
@@ -1307,6 +1360,34 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         spans
     };
 
+    // Build background job / status message segment
+    let job_spans: Vec<Span> = if let Some(job) = app.bg_jobs.first() {
+        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let idx = (job.started.elapsed().as_millis() / 80) as usize % spinner_frames.len();
+        vec![
+            Span::styled(
+                format!(" {} ", spinner_frames[idx]),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .bg(Color::Rgb(40, 40, 40)),
+            ),
+            Span::styled(
+                format!("{} ", job.label),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Rgb(40, 40, 40)),
+            ),
+        ]
+    } else if let Some((msg, _, is_error)) = &app.status_message {
+        let color = if *is_error { Color::Red } else { Color::Green };
+        vec![Span::styled(
+            format!(" {} ", msg),
+            Style::default().fg(color).bg(Color::Rgb(40, 40, 40)),
+        )]
+    } else {
+        Vec::new()
+    };
+
     // Build keybind hints
     let hint_spans: Vec<Span> = if on_splash {
         if app.session_manager.sessions.is_empty() {
@@ -1345,11 +1426,13 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let git_w: usize = git_spans.iter().map(|s| s.content.width()).sum();
+    let job_w: usize = job_spans.iter().map(|s| s.content.width()).sum();
     let hints_w: usize = hint_spans.iter().map(|s| s.content.width()).sum();
 
     // Truncate path if needed — never truncate branch/changes before path
     let max_path_w = w
         .saturating_sub(git_w)
+        .saturating_sub(job_w)
         .saturating_sub(hints_w)
         .saturating_sub(2); // minimal padding
     let path_display = if directory.width() > max_path_w && max_path_w > 4 {
@@ -1369,9 +1452,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     if is_narrow {
         // Two-row layout
-        // Row 1: [path] [pad] [branch + stats]
-        let line1_pad = w.saturating_sub(path_w + git_w);
+        // Row 1: [path] [job?] [pad] [branch + stats]
+        let line1_pad = w.saturating_sub(path_w + job_w + git_w);
         let mut line1_spans = vec![path_span.clone()];
+        line1_spans.extend(job_spans.iter().cloned());
         line1_spans.push(Span::styled(
             " ".repeat(line1_pad),
             Style::default().bg(Color::Rgb(40, 40, 40)),
@@ -1398,12 +1482,13 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let text = Text::from(vec![line1, line2]);
         frame.render_widget(Paragraph::new(text), area);
     } else {
-        // Single-row: [path] [branch+stats] [pad] [hints]
-        let left_w = path_w + git_w;
+        // Single-row: [path] [branch+stats] [job?] [pad] [hints]
+        let left_w = path_w + git_w + job_w;
         let padding = w.saturating_sub(left_w + hints_w);
 
         let mut spans = vec![path_span];
         spans.extend(git_spans);
+        spans.extend(job_spans);
         spans.push(Span::styled(
             " ".repeat(padding),
             Style::default().bg(Color::Rgb(40, 40, 40)),
@@ -1546,6 +1631,8 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
             crate::app::PaletteKind::ToggleGit => "command",
             crate::app::PaletteKind::ToggleFileBrowser => "command",
             crate::app::PaletteKind::ProjectFile(_) => "file",
+            crate::app::PaletteKind::RunCommand(_) => "git",
+            crate::app::PaletteKind::GitCheckout(_) => "branch",
         };
 
         let prefix = if is_sel { " > " } else { "   " };
@@ -1791,7 +1878,72 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
     }
 }
 
-fn draw_file_viewer(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
+/// Render a horizontal scrollbar along the bottom edge of a panel area.
+fn render_horizontal_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    is_narrow: bool,
+    scroll_offset: u16,
+    max_scroll: u16,
+    focused: bool,
+) {
+    if max_scroll == 0 || area.width < 5 {
+        return;
+    }
+
+    let border_left: u16 = if is_narrow { 0 } else { 1 };
+    let border_right: u16 = if is_narrow { 0 } else { 1 };
+    let track_width = area
+        .width
+        .saturating_sub(border_left + border_right)
+        .max(1) as usize;
+    if track_width < 2 {
+        return;
+    }
+
+    let total_content = max_scroll as usize + track_width;
+    let thumb_size = ((track_width as f64 * track_width as f64) / total_content as f64)
+        .ceil()
+        .max(1.0)
+        .min(track_width as f64) as usize;
+
+    let scrollable = track_width.saturating_sub(thumb_size);
+    let thumb_pos = if max_scroll > 0 {
+        ((scroll_offset as f64 / max_scroll as f64) * scrollable as f64).round() as usize
+    } else {
+        0
+    };
+
+    let thumb_color = if focused {
+        SCROLLBAR_THUMB_FOCUSED
+    } else {
+        SCROLLBAR_THUMB_UNFOCUSED
+    };
+
+    let bar_y = area.y + area.height.saturating_sub(1);
+    let bar_x_start = area.x + border_left;
+
+    let buf = frame.buffer_mut();
+    for i in 0..track_width {
+        let x = bar_x_start + i as u16;
+        if x >= area.x + area.width.saturating_sub(border_right) {
+            break;
+        }
+        let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
+        let ch = if is_thumb { "━" } else { "─" };
+        let style = if is_thumb {
+            Style::default().fg(thumb_color)
+        } else {
+            Style::default().fg(SCROLLBAR_TRACK)
+        };
+        if let Some(cell) = buf.cell_mut((x, bar_y)) {
+            cell.set_symbol(ch);
+            cell.set_style(style);
+        }
+    }
+}
+
+fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
     let is_focused = app.focus == FocusPanel::FileViewer;
     let file_path = app.viewing_file.as_deref().unwrap_or("");
     let title = if !file_path.is_empty() {
@@ -1816,45 +1968,111 @@ fn draw_file_viewer(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) {
         focused_block(&title, is_focused)
     };
 
-    let inner_height = area.height.saturating_sub(2);
+    // Render the outer block first, then work inside its inner area
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let inner_height = inner.height;
     let total_lines = app.file_highlighted.len().max(app.file_content.lines().count());
     let max_scroll = (total_lines as u16).saturating_sub(inner_height);
     let scroll = app.file_scroll.min(max_scroll);
+
+    // Line number gutter width (sticky, not horizontally scrolled)
+    let gutter_w: u16 = 5; // "{:>4} "
+    let content_width = inner.width.saturating_sub(gutter_w);
 
     // Only build Line objects for the visible range
     let visible_start = scroll as usize;
     let visible_end = (visible_start + inner_height as usize).min(total_lines);
 
-    let mut lines: Vec<Line> = Vec::with_capacity(visible_end - visible_start);
+    let mut max_content_width: u16 = 0;
+    let mut gutter_lines: Vec<Line> = Vec::with_capacity(visible_end - visible_start);
+    let mut content_lines: Vec<Line> = Vec::with_capacity(visible_end - visible_start);
+
     for i in visible_start..visible_end {
+        // Gutter (line numbers)
         let line_num = format!("{:>4} ", i + 1);
-        let mut spans = vec![Span::styled(
+        gutter_lines.push(Line::from(Span::styled(
             line_num,
             Style::default().fg(Color::Rgb(80, 80, 80)),
-        )];
+        )));
+
+        // Content
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut line_width: u16 = 0;
 
         if let Some(ranges) = app.file_highlighted.get(i) {
             for (style, text) in ranges {
+                line_width += text.width() as u16;
                 spans.push(Span::styled(text.clone(), syntect_to_ratatui(*style)));
             }
         } else if let Some(text_line) = app.file_content.lines().nth(i) {
+            line_width += text_line.width() as u16;
             spans.push(Span::styled(
                 text_line.to_string(),
                 Style::default().fg(Color::Rgb(200, 200, 200)),
             ));
         }
 
-        lines.push(Line::from(spans));
+        if line_width > max_content_width {
+            max_content_width = line_width;
+        }
+
+        content_lines.push(Line::from(spans));
     }
 
-    // No ratatui scroll needed — we already sliced to the visible window
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((0, app.file_scroll_h));
+    // Compute and clamp horizontal scroll
+    let max_scroll_h = max_content_width.saturating_sub(content_width);
+    app.file_max_scroll_h = max_scroll_h;
+    let scroll_h = app.file_scroll_h.min(max_scroll_h);
 
-    frame.render_widget(paragraph, area);
+    // Render sticky line number gutter
+    let gutter_area = Rect::new(inner.x, inner.y, gutter_w, inner_height);
+    let gutter_paragraph = Paragraph::new(gutter_lines);
+    frame.render_widget(gutter_paragraph, gutter_area);
+
+    // Render horizontally-scrollable content
+    let content_area = Rect::new(inner.x + gutter_w, inner.y, content_width, inner_height);
+    let content_paragraph = Paragraph::new(content_lines).scroll((0, scroll_h));
+    frame.render_widget(content_paragraph, content_area);
+
+    // Paint selection highlight over rendered cells
+    if let Some(sel) = &app.file_selection {
+        let sel_bg = Color::Rgb(60, 80, 140);
+        let (sr, sc, er, ec) = if sel.start_row < sel.end_row
+            || (sel.start_row == sel.end_row && sel.start_col <= sel.end_col)
+        {
+            (sel.start_row, sel.start_col, sel.end_row, sel.end_col)
+        } else {
+            (sel.end_row, sel.end_col, sel.start_row, sel.start_col)
+        };
+
+        let buf = frame.buffer_mut();
+        for screen_row in 0..inner_height {
+            let abs_row = visible_start as u16 + screen_row;
+            if abs_row < sr || abs_row > er {
+                continue;
+            }
+            let line_sel_start = if abs_row == sr { sc } else { 0 };
+            let line_sel_end = if abs_row == er { ec } else { u16::MAX };
+
+            for screen_col in 0..content_width {
+                let abs_col = screen_col + scroll_h;
+                if abs_col >= line_sel_start && abs_col < line_sel_end {
+                    let x = content_area.x + screen_col;
+                    let y = content_area.y + screen_row;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_bg(sel_bg);
+                    }
+                }
+            }
+        }
+    }
 
     render_scrollbar(frame, area, is_narrow, scroll, max_scroll, is_focused);
+    if max_scroll_h > 0 {
+        render_horizontal_scrollbar(frame, area, is_narrow, scroll_h, max_scroll_h, is_focused);
+    }
 }
 
 /// Convert syntect style to ratatui style.

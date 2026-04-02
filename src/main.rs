@@ -116,26 +116,32 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         // Resize PTY and vt100 parser BEFORE drawing so the screen dimensions
         // match the rendering area. Prevents wide content from leaking into
         // adjacent panels when layout changes (e.g. file browser toggled).
-        if (app.output_width, app.output_height) != last_resize
+        let needs_resize = (app.output_width, app.output_height) != last_resize
             && app.output_width > 0
-            && app.output_height > 0
-        {
-            let _ = app
-                .session_manager
-                .resize_active(app.output_width, app.output_height);
-            if let Some(parser) = &mut app.pty_parser {
-                parser
-                    .screen_mut()
-                    .set_size(app.output_height, app.output_width);
+            && app.output_height > 0;
+        if needs_resize || app.needs_pty_resize {
+            if app.output_width > 0 && app.output_height > 0 {
+                let _ = app
+                    .session_manager
+                    .resize_active(app.output_width, app.output_height);
+                if let Some(parser) = &mut app.pty_parser {
+                    parser
+                        .screen_mut()
+                        .set_size(app.output_height, app.output_width);
+                }
+                last_resize = (app.output_width, app.output_height);
             }
-            last_resize = (app.output_width, app.output_height);
+            app.needs_pty_resize = false;
         }
 
-        // Force full repaint every frame: reset both internal buffers so
-        // the diff sends all cells. This prevents stray terminal corruption
-        // (from PTY escape sequences) from persisting.
-        terminal.swap_buffers();
-        terminal.swap_buffers();
+        // Force a full repaint after parser reinitialization (e.g. reconnecting
+        // to an existing session) so ratatui redraws every cell instead of
+        // diffing against a stale frame buffer.
+        if app.needs_full_repaint {
+            terminal.clear()?;
+            app.needs_full_repaint = false;
+        }
+
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         // Track terminal size
@@ -174,10 +180,16 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             last_bg_check = now;
         }
 
+        // Poll background jobs (git commands etc.)
+        app.poll_bg_jobs();
+
         let picker_mode = app.show_picker || app.show_close_confirm || app.show_command_palette;
         let actions = input::drain_actions(tick_rate, picker_mode);
 
-        let mut did_forward = false;
+        // Accumulate all PTY input bytes from this frame into one buffer,
+        // then send as a single write to avoid the shell processing
+        // partial input with intermediate redraws.
+        let mut pty_buf: Vec<u8> = Vec::new();
 
         for action in actions {
             // Clear error message on any user action
@@ -191,10 +203,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         | Action::MouseRelease(..)
                         | Action::ScrollUp(..)
                         | Action::ScrollDown(..)
+                        | Action::ScrollLeft(..)
+                        | Action::ScrollRight(..)
                         | Action::EscapeKey
                         | Action::CopySelection
                 ) {
                     app.selection = None;
+                    app.file_selection = None;
                 }
             }
 
@@ -371,8 +386,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     {
                         // Don't forward typing to PTY when non-terminal panel focused
                     } else if app.session_manager.active_session().is_some() {
-                        let _ = app.session_manager.write_input(chars.as_bytes());
-                        did_forward = true;
+                        pty_buf.extend_from_slice(chars.as_bytes());
                         app.last_input_time = Some(Instant::now());
                         app.follow_mode = true;
                     }
@@ -444,7 +458,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                 app.file_scroll_h = app.file_scroll_h.saturating_sub(4);
                             }
                             "Right" => {
-                                app.file_scroll_h = app.file_scroll_h.saturating_add(4);
+                                app.file_scroll_h = app.file_scroll_h
+                                    .saturating_add(4)
+                                    .min(app.file_max_scroll_h);
                             }
                             "Up" => {
                                 app.file_scroll = app.file_scroll.saturating_sub(1);
@@ -458,8 +474,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         // Map special key names to actual escape sequences
                         let seq = special_key_sequence(&key);
                         if app.session_manager.active_session().is_some() {
-                            let _ = app.session_manager.write_input(seq.as_bytes());
-                            did_forward = true;
+                            pty_buf.extend_from_slice(seq.as_bytes());
                             app.last_input_time = Some(Instant::now());
                             app.follow_mode = true;
                         }
@@ -469,8 +484,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     if app.session_manager.active_session().is_some() {
                         // Ctrl key = char & 0x1f
                         let ctrl_byte = (c as u8) & 0x1f;
-                        let _ = app.session_manager.write_input(&[ctrl_byte]);
-                        did_forward = true;
+                        pty_buf.push(ctrl_byte);
                         app.last_input_time = Some(Instant::now());
                         app.follow_mode = true;
                     }
@@ -478,18 +492,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 Action::Paste(text) => {
                     if app.session_manager.active_session().is_some() {
                         // Send bracketed paste: \x1b[200~ ... \x1b[201~
-                        // This tells the terminal/shell this is pasted text, not typed
-                        let _ = app.session_manager.write_input(b"\x1b[200~");
-
-                        // Chunk large pastes to avoid overwhelming the PTY
-                        let bytes = text.as_bytes();
-                        let chunk_size = 4096;
-                        for chunk in bytes.chunks(chunk_size) {
-                            let _ = app.session_manager.write_input(chunk);
-                        }
-
-                        let _ = app.session_manager.write_input(b"\x1b[201~");
-                        did_forward = true;
+                        pty_buf.extend_from_slice(b"\x1b[200~");
+                        pty_buf.extend_from_slice(text.as_bytes());
+                        pty_buf.extend_from_slice(b"\x1b[201~");
                         app.last_input_time = Some(Instant::now());
                         app.follow_mode = true;
                     }
@@ -500,8 +505,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         app.selection = None;
                     } else if app.focus == app::FocusPanel::Output {
                         if app.session_manager.active_session().is_some() {
-                            let _ = app.session_manager.write_input(b"\x1b");
-                            did_forward = true;
+                            pty_buf.push(0x1b);
                             app.last_input_time = Some(Instant::now());
                         }
                     } else if app.focus == app::FocusPanel::FileBrowser {
@@ -584,6 +588,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                 app.follow_mode = true;
                             }
                         }
+                    }
+                }
+                Action::ScrollLeft(mx, my) => {
+                    let target = scroll_target(&app, mx, my);
+                    if matches!(target, ScrollPanel::FileViewer) {
+                        app.file_scroll_h = app.file_scroll_h.saturating_sub(4);
+                    }
+                }
+                Action::ScrollRight(mx, my) => {
+                    let target = scroll_target(&app, mx, my);
+                    if matches!(target, ScrollPanel::FileViewer) {
+                        app.file_scroll_h = app.file_scroll_h
+                            .saturating_add(4)
+                            .min(app.file_max_scroll_h);
                     }
                 }
                 Action::ScrollToTop => {
@@ -706,6 +724,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         && mx < app.file_viewer_area.x + app.file_viewer_area.width
                     {
                         app.focus = app::FocusPanel::FileViewer;
+                        // Start text selection in file viewer
+                        let border = if app.is_narrow { 0u16 } else { 1 };
+                        let gutter_w: u16 = 5;
+                        let rel_col = mx.saturating_sub(app.file_viewer_area.x + border + gutter_w)
+                            + app.file_scroll_h;
+                        let rel_row = my.saturating_sub(app.file_viewer_area.y + border)
+                            + app.file_scroll;
+                        app.selection = None;
+                        app.file_selection = Some(app::TextSelection {
+                            start_col: rel_col,
+                            start_row: rel_row,
+                            end_col: rel_col,
+                            end_row: rel_row,
+                            active: true,
+                        });
                     } else if app.output_area.width > 0
                         && my >= app.output_area.y
                         && my < app.output_area.y + app.output_area.height
@@ -714,6 +747,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     {
                         app.focus = app::FocusPanel::Output;
                         // Start text selection
+                        app.file_selection = None;
                         let border = if app.is_narrow { 0 } else { 1 };
                         let rel_col = mx.saturating_sub(app.output_area.x + border);
                         let rel_row = my.saturating_sub(app.output_area.y + border);
@@ -748,6 +782,16 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             sel.end_row = my.saturating_sub(app.output_area.y + border);
                         }
                     }
+                    if let Some(ref mut sel) = app.file_selection {
+                        if sel.active {
+                            let border = if app.is_narrow { 0u16 } else { 1 };
+                            let gutter_w: u16 = 5;
+                            sel.end_col = mx.saturating_sub(app.file_viewer_area.x + border + gutter_w)
+                                + app.file_scroll_h;
+                            sel.end_row = my.saturating_sub(app.file_viewer_area.y + border)
+                                + app.file_scroll;
+                        }
+                    }
                 }
                 Action::MouseRelease(_mx, _my) => {
                     if let Some(ref sel) = app.selection {
@@ -755,6 +799,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         if sel.start_col == sel.end_col && sel.start_row == sel.end_row {
                             app.selection = None;
                         } else if let Some(ref mut sel) = app.selection {
+                            sel.active = false;
+                        }
+                    }
+                    if let Some(ref sel) = app.file_selection {
+                        if sel.start_col == sel.end_col && sel.start_row == sel.end_row {
+                            app.file_selection = None;
+                        } else if let Some(ref mut sel) = app.file_selection {
                             sel.active = false;
                         }
                     }
@@ -769,16 +820,29 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         }
                     }
                     app.selection = None;
+                    if let Some(ref sel) = app.file_selection {
+                        let text = extract_file_selection(&app.file_content, sel);
+                        if !text.is_empty() {
+                            copy_to_clipboard(&text);
+                        }
+                    }
+                    app.file_selection = None;
                 }
                 Action::None => {}
                 _ => {}
             }
         }
 
-        if did_forward {
-            refresh_output(&mut app);
-            last_output_refresh = Instant::now();
+        // Flush accumulated PTY input as a single write
+        if !pty_buf.is_empty() {
+            let _ = app.session_manager.write_input(&pty_buf);
         }
+
+        // Note: we intentionally don't refresh output immediately after
+        // writing. The shell needs time to process input and echo its
+        // response. Reading too early captures partial escape sequences,
+        // causing visual artifacts (e.g. garbled text when holding
+        // backspace). The 33ms active-refresh interval handles it.
 
 
         if app.should_quit {
@@ -868,6 +932,40 @@ fn scroll_target(app: &App, mx: u16, my: u16) -> ScrollPanel {
     } else {
         ScrollPanel::Output
     }
+}
+
+/// Extract text from file content within the selection bounds.
+/// Selection coordinates use absolute line indices and character offsets.
+fn extract_file_selection(content: &str, sel: &app::TextSelection) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len() as u16;
+
+    let (sr, sc, er, ec) = if sel.start_row < sel.end_row
+        || (sel.start_row == sel.end_row && sel.start_col <= sel.end_col)
+    {
+        (sel.start_row, sel.start_col, sel.end_row, sel.end_col)
+    } else {
+        (sel.end_row, sel.end_col, sel.start_row, sel.start_col)
+    };
+
+    let mut result = String::new();
+    for row in sr..=er.min(total.saturating_sub(1)) {
+        let line = lines.get(row as usize).copied().unwrap_or("");
+        let chars: Vec<char> = line.chars().collect();
+        let line_len = chars.len() as u16;
+        let col_start = if row == sr { sc.min(line_len) } else { 0 };
+        let col_end = if row == er { ec.min(line_len) } else { line_len };
+        let selected: String = chars
+            .iter()
+            .skip(col_start as usize)
+            .take(col_end.saturating_sub(col_start) as usize)
+            .collect();
+        result.push_str(selected.trim_end());
+        if row < er {
+            result.push('\n');
+        }
+    }
+    result
 }
 
 /// Extract text from vt100 screen within the selection bounds.
@@ -968,6 +1066,11 @@ fn refresh_output(app: &mut App) {
         app.pty_parser = Some(parser);
         app.pty_session_id = session_id;
         app.pty_last_len = new_offset;
+        // Force a PTY resize to send SIGWINCH, causing the program to redraw
+        // at the correct dimensions. Also force a full terminal repaint so
+        // ratatui doesn't diff against a stale frame buffer.
+        app.needs_pty_resize = true;
+        app.needs_full_repaint = true;
     } else {
         // Incremental read — only get new bytes since last offset
         let (data, new_offset) = match app.session_manager.read_output_bytes() {
@@ -993,21 +1096,66 @@ fn refresh_output(app: &mut App) {
             app.pty_parser = Some(parser);
             app.pty_last_len = full_offset;
         } else if !data.is_empty() {
-            // Feed only new bytes to parser
+            // Check for \x1b[3J (erase scrollback) which vt100 doesn't
+            // handle. If found, recreate the parser with only the current
+            // screen content so scrollback is truly cleared.
+            let has_erase_scrollback = data.windows(4).any(|w| w == b"\x1b[3J");
+
             if let Some(parser) = &mut app.pty_parser {
                 parser.process(&data);
             }
             app.pty_last_len = new_offset;
+
+            if has_erase_scrollback {
+                if let Some(old_parser) = &app.pty_parser {
+                    let (rows, cols) = old_parser.screen().size();
+                    // Capture current screen contents as raw escape sequences
+                    let screen_contents = old_parser.screen().contents_formatted();
+                    let mut new_parser = vt100::Parser::new_with_callbacks(
+                        rows,
+                        cols,
+                        10000,
+                        app::PtyCallbacks {
+                            title: old_parser.callbacks().title.clone(),
+                        },
+                    );
+                    new_parser.process(&screen_contents);
+                    // Restore cursor position
+                    let (cr, cc) = old_parser.screen().cursor_position();
+                    let cursor_seq = format!("\x1b[{};{}H", cr + 1, cc + 1);
+                    new_parser.process(cursor_seq.as_bytes());
+                    app.pty_parser = Some(new_parser);
+                }
+                app.scroll_offset = 0;
+                app.follow_mode = true;
+            }
         }
         // else: no new data, skip
     }
 
-    // Extract title from vt100 callbacks
-    if let Some(parser) = &app.pty_parser {
+    // Extract title from vt100 callbacks, and detect screen clear
+    if let Some(parser) = &mut app.pty_parser {
         let title = &parser.callbacks().title;
         if app.pty_title != *title {
             app.pty_title = title.clone();
         }
+
+        // Detect when scrollback decreased (e.g. `clear` command sends
+        // \x1b[3J to erase scrollback). Clamp scroll_offset so the user
+        // isn't stuck scrolled into content that no longer exists.
+        let screen = parser.screen_mut();
+        screen.set_scrollback(usize::MAX);
+        let scrollback = screen.scrollback() as u16;
+        screen.set_scrollback(0);
+        if scrollback < app.pty_last_scrollback {
+            // Scrollback shrank — clamp offset and snap to bottom
+            app.scroll_offset = app.scroll_offset.min(scrollback);
+            if scrollback == 0 {
+                app.scroll_offset = 0;
+                app.follow_mode = true;
+            }
+        }
+        app.pty_last_scrollback = scrollback;
     }
 }
 

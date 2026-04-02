@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -9,6 +10,18 @@ use crate::config::Config;
 use crate::filebrowser::FileBrowser;
 use crate::git;
 use crate::sessions::SessionManager;
+
+/// A background job (e.g. git push) that runs outside the PTY.
+pub struct BackgroundJob {
+    pub label: String,
+    pub started: Instant,
+    pub result: Arc<Mutex<Option<JobResult>>>,
+}
+
+pub struct JobResult {
+    pub success: bool,
+    pub output: String,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FocusPanel {
@@ -89,6 +102,8 @@ pub struct App {
     pub file_scroll: u16,
     /// File viewer horizontal scroll offset
     pub file_scroll_h: u16,
+    /// Max horizontal scroll (content width - viewport width), computed during draw
+    pub file_max_scroll_h: u16,
     /// On narrow mode, whether to show file view or terminal
     pub show_file_view: bool,
     // Click target areas
@@ -108,8 +123,19 @@ pub struct App {
     pub pty_session_id: String,
     pub pty_last_len: usize,
     pub pty_title: String,
+    pub pty_last_scrollback: u16,
+    /// Set when PTY needs a forced resize (e.g. after reconnecting to an existing session)
+    pub needs_pty_resize: bool,
+    /// Set when the terminal needs a full repaint (e.g. after parser reinitialization)
+    pub needs_full_repaint: bool,
     // Text selection state
     pub selection: Option<TextSelection>,
+    /// Text selection for the file viewer (row = line index, col = character offset)
+    pub file_selection: Option<TextSelection>,
+    // Background jobs (git commands etc.)
+    pub bg_jobs: Vec<BackgroundJob>,
+    /// Message to show briefly in status bar after a job completes
+    pub status_message: Option<(String, Instant, bool)>, // (msg, when, is_error)
     // Sub-areas for git panel click detection
     pub git_status_area: Rect,
     pub git_log_area: Rect,
@@ -161,6 +187,7 @@ impl App {
             file_highlighted: Vec::new(),
             file_scroll: 0,
             file_scroll_h: 0,
+            file_max_scroll_h: 0,
             show_file_view: false,
             tab_bar_area: Rect::default(),
             output_area: Rect::default(),
@@ -171,10 +198,16 @@ impl App {
             cached_project_files: Vec::new(),
             error_message: None,
             selection: None,
+            file_selection: None,
+            bg_jobs: Vec::new(),
+            status_message: None,
             pty_parser: None,
             pty_session_id: String::new(),
             pty_last_len: 0,
             pty_title: String::new(),
+            pty_last_scrollback: 0,
+            needs_pty_resize: false,
+            needs_full_repaint: false,
             git_status_area: Rect::default(),
             git_log_area: Rect::default(),
         }
@@ -236,6 +269,94 @@ impl App {
         }
     }
 
+    /// Spawn a background command (e.g. git push) and track it.
+    pub fn spawn_bg_command(&mut self, label: &str, command: &str, directory: &str) {
+        let result: Arc<Mutex<Option<JobResult>>> = Arc::new(Mutex::new(None));
+        let result_clone = result.clone();
+        let cmd_str = command.to_string();
+        let dir_str = directory.to_string();
+
+        std::thread::spawn(move || {
+            let output = std::process::Command::new("sh")
+                .args(["-c", &cmd_str])
+                .current_dir(&dir_str)
+                .output();
+
+            let job_result = match output {
+                Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+                    let combined = if stderr.is_empty() {
+                        stdout
+                    } else if stdout.is_empty() {
+                        stderr
+                    } else {
+                        format!("{}\n{}", stdout, stderr)
+                    };
+                    JobResult {
+                        success: o.status.success(),
+                        output: combined.trim().to_string(),
+                    }
+                }
+                Err(e) => JobResult {
+                    success: false,
+                    output: format!("Failed to run: {}", e),
+                },
+            };
+
+            if let Ok(mut r) = result_clone.lock() {
+                *r = Some(job_result);
+            }
+        });
+
+        self.bg_jobs.push(BackgroundJob {
+            label: label.to_string(),
+            started: Instant::now(),
+            result,
+        });
+    }
+
+    /// Poll background jobs, moving completed ones to status_message.
+    pub fn poll_bg_jobs(&mut self) {
+        let mut i = 0;
+        while i < self.bg_jobs.len() {
+            let done = {
+                let lock = self.bg_jobs[i].result.lock().unwrap();
+                lock.is_some()
+            };
+            if done {
+                let job = self.bg_jobs.remove(i);
+                let result = job.result.lock().unwrap().take().unwrap();
+                let msg = if result.output.is_empty() {
+                    if result.success {
+                        format!("{} ✓", job.label)
+                    } else {
+                        format!("{} failed", job.label)
+                    }
+                } else {
+                    let first_line = result.output.lines().next().unwrap_or("");
+                    if result.success {
+                        format!("{}: {}", job.label, first_line)
+                    } else {
+                        format!("{} failed: {}", job.label, first_line)
+                    }
+                };
+                self.status_message = Some((msg, Instant::now(), !result.success));
+                // Refresh git data after git commands complete
+                self.refresh_data();
+            } else {
+                i += 1;
+            }
+        }
+
+        // Clear status message after 5 seconds
+        if let Some((_, when, _)) = &self.status_message {
+            if when.elapsed().as_secs() >= 5 {
+                self.status_message = None;
+            }
+        }
+    }
+
     /// Open folder by full path (for command palette "Open Folder").
     #[allow(dead_code)]
     pub fn open_folder(&mut self, path: &str) {
@@ -291,6 +412,8 @@ impl App {
 
     pub fn command_palette_items(&self) -> Vec<PaletteItem> {
         let filter = self.command_palette_filter.to_lowercase();
+        // Normalized filter: strip punctuation so "git push" matches "Git: Push"
+        let filter_norm = normalize_for_match(&filter);
         let has_session = self.session_manager.active_session().is_some() && !self.is_on_welcome();
         let mut items = Vec::new();
 
@@ -309,8 +432,50 @@ impl App {
             });
         }
 
+        // Git commands (only when in a session)
+        if has_session {
+            let git_commands: Vec<(&str, &str, &str)> = vec![
+                ("Git: Push", "git push", "Push commits to remote"),
+                ("Git: Pull", "git pull", "Pull changes from remote"),
+                ("Git: Fetch", "git fetch", "Fetch from remote"),
+                ("Git: Stash", "git stash", "Stash working changes"),
+                ("Git: Stash Pop", "git stash pop", "Restore stashed changes"),
+                ("Git: Commit", "git commit", "Open commit editor"),
+            ];
+            for (label, cmd, subtitle) in git_commands {
+                items.push(PaletteItem {
+                    label: label.to_string(),
+                    subtitle: subtitle.to_string(),
+                    kind: PaletteKind::RunCommand(cmd.to_string()),
+                });
+            }
+
+            // Git branch switching
+            let show_branches = filter_norm.starts_with("git switch")
+                || filter_norm.starts_with("git checkout")
+                || filter_norm.starts_with("git branch");
+            if show_branches {
+                if let Some(session) = self.session_manager.active_session() {
+                    let dir = session.directory.clone();
+                    if !dir.is_empty() {
+                        let current = self.git_branch.clone();
+                        for branch in git::list_branches(&dir) {
+                            if branch == current {
+                                continue;
+                            }
+                            items.push(PaletteItem {
+                                label: format!("Git: Switch to {}", branch),
+                                subtitle: String::new(),
+                                kind: PaletteKind::GitCheckout(branch),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         // Show projects when not in a session, or when filter matches "Open:" flow
-        let show_projects = !has_session || filter.starts_with("open:");
+        let show_projects = !has_session || filter_norm.starts_with("open");
         if show_projects {
             for project in &self.available_projects {
                 items.push(PaletteItem {
@@ -338,7 +503,12 @@ impl App {
             items
                 .into_iter()
                 .filter(|i| {
-                    i.label.to_lowercase().contains(&filter)
+                    let label_norm = normalize_for_match(&i.label.to_lowercase());
+                    let subtitle_norm = normalize_for_match(&i.subtitle.to_lowercase());
+                    label_norm.contains(&filter_norm)
+                        || subtitle_norm.contains(&filter_norm)
+                        // Also match the raw filter for exact typed queries
+                        || i.label.to_lowercase().contains(&filter)
                         || i.subtitle.to_lowercase().contains(&filter)
                 })
                 .collect()
@@ -376,6 +546,20 @@ impl App {
                     self.open_file(&path);
                     self.show_file_browser = true;
                 }
+                PaletteKind::RunCommand(cmd) => {
+                    if let Some(session) = self.session_manager.active_session() {
+                        let dir = session.directory.clone();
+                        let label = cmd.clone();
+                        self.spawn_bg_command(&label, &cmd, &dir);
+                    }
+                }
+                PaletteKind::GitCheckout(branch) => {
+                    if let Some(session) = self.session_manager.active_session() {
+                        let dir = session.directory.clone();
+                        let cmd = format!("git checkout {}", branch);
+                        self.spawn_bg_command(&cmd, &cmd, &dir);
+                    }
+                }
             }
         }
     }
@@ -407,6 +591,7 @@ impl App {
                 self.file_content = content;
                 self.file_scroll = 0;
                 self.file_scroll_h = 0;
+                self.file_max_scroll_h = 0;
                 self.show_file_view = true;
             }
             Err(_) => {
@@ -422,6 +607,7 @@ impl App {
         self.file_highlighted.clear();
         self.file_scroll = 0;
         self.file_scroll_h = 0;
+        self.file_max_scroll_h = 0;
         self.show_file_view = false;
     }
 
@@ -457,6 +643,10 @@ pub enum PaletteKind {
     ToggleFileBrowser,
     /// Open a file from the project index
     ProjectFile(String),
+    /// Run a command in the active PTY
+    RunCommand(String),
+    /// Switch to a git branch (runs git checkout)
+    GitCheckout(String),
 }
 
 /// Pre-highlight a file's content using syntect. Returns styled ranges per line.
@@ -561,6 +751,17 @@ fn recent_project_files(dir: &str) -> Vec<(String, String, String)> {
         .into_iter()
         .map(|(name, rel, full, _)| (name, rel, full))
         .collect()
+}
+
+/// Strip punctuation (colons, dots, dashes, etc.) and collapse whitespace
+/// so "git push" matches "Git: Push" and "open folder" matches "Open Folder...".
+fn normalize_for_match(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn discover_projects(dir: &PathBuf) -> Vec<String> {

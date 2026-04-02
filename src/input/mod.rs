@@ -16,8 +16,10 @@ pub enum Action {
     ToggleFileView,
     Exit,
     // Picker/dialog actions
-    ScrollUp(u16, u16),   // (x, y) mouse position
-    ScrollDown(u16, u16), // (x, y) mouse position
+    ScrollUp(u16, u16),    // (x, y) mouse position
+    ScrollDown(u16, u16),  // (x, y) mouse position
+    ScrollLeft(u16, u16),  // (x, y) mouse position
+    ScrollRight(u16, u16), // (x, y) mouse position
     ScrollToTop,
     ScrollToBottom,
     Confirm,
@@ -68,6 +70,11 @@ pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
                 if !text.is_empty() {
                     actions.push(Action::Paste(text));
                 }
+            }
+            Ok(Event::Resize(..)) => {
+                // Terminal resized — continue draining. The main loop
+                // detects the new dimensions via ratatui layout on the
+                // next draw and resizes the PTY accordingly.
             }
             _ => break,
         }
@@ -231,6 +238,8 @@ fn map_mouse(mouse: MouseEvent) -> Option<Action> {
     match mouse.kind {
         MouseEventKind::ScrollUp => Some(Action::ScrollUp(mouse.column, mouse.row)),
         MouseEventKind::ScrollDown => Some(Action::ScrollDown(mouse.column, mouse.row)),
+        MouseEventKind::ScrollLeft => Some(Action::ScrollLeft(mouse.column, mouse.row)),
+        MouseEventKind::ScrollRight => Some(Action::ScrollRight(mouse.column, mouse.row)),
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             Some(Action::MouseClick(mouse.column, mouse.row))
         }

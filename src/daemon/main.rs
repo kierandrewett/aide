@@ -27,9 +27,21 @@ struct PtySession {
 type Sessions = Arc<Mutex<HashMap<String, PtySession>>>;
 
 fn main() {
-    // Detach from terminal
+    // Fully detach from the parent's terminal so child PTY processes
+    // cannot write to it via /dev/tty
     unsafe {
         libc::setsid();
+        libc::ioctl(0, libc::TIOCNOTTY);
+
+        // Close ALL inherited file descriptors above stderr.
+        // The parent (aide) has the real terminal on fd 1 (stdout).
+        // Even though we set Stdio::null() for 0/1/2, higher fds
+        // (duplicated by the runtime, crossterm, etc.) may still
+        // point to the real terminal. Child PTY processes inherit
+        // these and can write escape sequences that corrupt our display.
+        for fd in 3..1024 {
+            libc::close(fd);
+        }
     }
 
     let sock_path = protocol::socket_path();
