@@ -260,7 +260,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Calculate layout with optional file browser on left
     let file_browser_width: u16 = if app.show_file_browser && !is_narrow {
-        (size.width / 5).max(20).min(40)
+        (size.width / 5).clamp(20, 40)
     } else {
         0
     };
@@ -775,7 +775,7 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_millis();
-                    (ms / 530) % 2 == 0
+                    (ms / 530).is_multiple_of(2)
                 }
             } else {
                 true // unfocused cursor is always visible (solid grey)
@@ -1398,21 +1398,12 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Build keybind hints
     let hint_spans: Vec<Span> = if on_splash {
-        if app.session_manager.sessions.is_empty() {
-            vec![
-                hint_key("^P"),
-                hint_label(" commands "),
-                hint_key("^X"),
-                hint_label(" exit "),
-            ]
-        } else {
-            vec![
-                hint_key("^P"),
-                hint_label(" commands "),
-                hint_key("^X"),
-                hint_label(" exit "),
-            ]
-        }
+        vec![
+            hint_key("^P"),
+            hint_label(" commands "),
+            hint_key("^X"),
+            hint_label(" exit "),
+        ]
     } else if matches!(app.focus, FocusPanel::GitStatus | FocusPanel::GitLog)
         && app.show_right_panel
     {

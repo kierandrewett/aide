@@ -135,7 +135,7 @@ fn handle_client(stream: UnixStream, sessions: Sessions) {
         };
 
         let response = handle_request(request, &sessions);
-        if let Err(_) = send_response(&mut writer, &response) {
+        if send_response(&mut writer, &response).is_err() {
             break;
         }
 

@@ -100,7 +100,7 @@ pub fn log_path() -> std::path::PathBuf {
 mod base64_bytes {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer>(data: &Vec<u8>, ser: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(data: &[u8], ser: S) -> Result<S::Ok, S::Error> {
         // Simple hex encoding for now — fast enough and no extra deps
         let hex: String = data.iter().map(|b| format!("{:02x}", b)).collect();
         hex.serialize(ser)
