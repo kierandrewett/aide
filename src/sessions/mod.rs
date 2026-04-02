@@ -1,21 +1,25 @@
 use anyhow::Result;
 
-use crate::tmux;
+use crate::pty_backend::DaemonClient;
 
 #[derive(Clone, Debug)]
 pub struct Session {
     pub name: String,
+    pub session_id: String,
     pub project_name: String,
     pub directory: String,
     pub instance_number: u32,
     pub has_notification: bool,
     pub last_output_len: usize,
+    /// Byte offset into the daemon output buffer for incremental reads.
+    pub output_offset: usize,
 }
 
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     pub active_index: usize,
     pub command: String,
+    pub daemon: Option<DaemonClient>,
 }
 
 impl SessionManager {
@@ -24,24 +28,44 @@ impl SessionManager {
             sessions: Vec::new(),
             active_index: 0,
             command,
+            daemon: None,
         }
     }
 
-    /// Reconnect to existing aide tmux sessions on startup.
+    /// Connect to daemon, starting it if needed.
+    pub fn connect_daemon(&mut self) -> Result<()> {
+        let client = DaemonClient::connect()?;
+        self.daemon = Some(client);
+        Ok(())
+    }
+
+    fn daemon(&mut self) -> Result<&mut DaemonClient> {
+        if self.daemon.is_none() {
+            self.connect_daemon()?;
+        }
+        self.daemon
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("no daemon connection"))
+    }
+
+    /// Reconnect to existing sessions on startup.
     pub fn reconnect_existing(&mut self) -> Result<()> {
-        let existing = tmux::list_sessions()?;
-        for name in existing {
-            // Only pick up sessions that look like aide sessions (name_number pattern)
-            if let Some((project, num)) = parse_session_name(&name) {
-                // Try to get the session's working directory
-                let dir = get_session_directory(&name).unwrap_or_default();
+        let daemon = self.daemon()?;
+        let existing = daemon.list_sessions()?;
+        for info in existing {
+            if !info.alive {
+                continue;
+            }
+            if let Some((project, num)) = parse_session_name(&info.session_id) {
                 self.sessions.push(Session {
-                    name: name.clone(),
+                    name: info.session_id.clone(),
+                    session_id: info.session_id,
                     project_name: project,
-                    directory: dir,
+                    directory: info.cwd,
                     instance_number: num,
                     has_notification: false,
                     last_output_len: 0,
+                    output_offset: 0,
                 });
             }
         }
@@ -52,18 +76,21 @@ impl SessionManager {
     /// Create a new session for a project directory.
     pub fn create_session(&mut self, project_name: &str, directory: &str) -> Result<&Session> {
         let instance_number = self.next_instance_number(project_name);
-        let session_name = format!("{}_{}", project_name, instance_number);
+        let session_name = format!("{}_{}", sanitize_name(project_name), instance_number);
 
-        tmux::create_session(&session_name, directory)?;
-        tmux::run_command(&session_name, &self.command)?;
+        let command = self.command.clone();
+        let daemon = self.daemon()?;
+        daemon.create_session(&session_name, directory, &command, &[])?;
 
         self.sessions.push(Session {
-            name: session_name,
+            name: session_name.clone(),
+            session_id: session_name,
             project_name: project_name.to_string(),
             directory: directory.to_string(),
             instance_number,
             has_notification: false,
             last_output_len: 0,
+            output_offset: 0,
         });
 
         self.active_index = self.sessions.len() - 1;
@@ -76,14 +103,113 @@ impl SessionManager {
         if index >= self.sessions.len() {
             return Ok(());
         }
-        let session = &self.sessions[index];
-        let _ = tmux::kill_session(&session.name);
+        let session_id = self.sessions[index].session_id.clone();
+        if let Ok(daemon) = self.daemon() {
+            let _ = daemon.kill_session(&session_id);
+        }
         self.sessions.remove(index);
         if self.active_index >= self.sessions.len() && !self.sessions.is_empty() {
             self.active_index = self.sessions.len() - 1;
         }
         self.save_tab_order();
         Ok(())
+    }
+
+    /// Write raw input to the active session's PTY.
+    pub fn write_input(&mut self, data: &[u8]) -> Result<()> {
+        let session_id = self
+            .active_session()
+            .map(|s| s.session_id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no active session"))?;
+        let daemon = self.daemon()?;
+        daemon.write_input(&session_id, data)
+    }
+
+    /// Write input to a specific session.
+    #[allow(dead_code)]
+    pub fn write_input_to(&mut self, session_id: &str, data: &[u8]) -> Result<()> {
+        let daemon = self.daemon()?;
+        daemon.write_input(session_id, data)
+    }
+
+    /// Read incremental output from the active session.
+    pub fn read_output(&mut self) -> Result<String> {
+        let idx = self.active_index;
+        let session_id = self
+            .sessions
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("no active session"))?
+            .session_id
+            .clone();
+        let daemon = self.daemon()?;
+        let (data, new_offset) = daemon.read_output(&session_id, 0)?; // Read full buffer
+        if let Some(s) = self.sessions.get_mut(idx) {
+            s.output_offset = new_offset;
+        }
+        Ok(String::from_utf8_lossy(&data).to_string())
+    }
+
+    /// Read raw bytes from the active session (for vt100 parser).
+    /// Uses incremental reads from the last known offset.
+    pub fn read_output_bytes(&mut self) -> Result<(Vec<u8>, usize)> {
+        let idx = self.active_index;
+        let (session_id, offset) = {
+            let s = self
+                .sessions
+                .get(idx)
+                .ok_or_else(|| anyhow::anyhow!("no active session"))?;
+            (s.session_id.clone(), s.output_offset)
+        };
+        let daemon = self.daemon()?;
+        let (data, new_offset) = daemon.read_output(&session_id, offset)?;
+        if let Some(s) = self.sessions.get_mut(idx) {
+            s.output_offset = new_offset;
+        }
+        Ok((data, new_offset))
+    }
+
+    /// Read the full output buffer for the active session (for parser reset).
+    pub fn read_output_bytes_full(&mut self) -> Result<(Vec<u8>, usize)> {
+        let idx = self.active_index;
+        let session_id = self
+            .sessions
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("no active session"))?
+            .session_id
+            .clone();
+        let daemon = self.daemon()?;
+        let (data, new_offset) = daemon.read_output(&session_id, 0)?;
+        if let Some(s) = self.sessions.get_mut(idx) {
+            s.output_offset = new_offset;
+        }
+        Ok((data, new_offset))
+    }
+
+    /// Read output from a specific session by index.
+    pub fn read_output_for(&mut self, index: usize) -> Result<String> {
+        let (session_id, _offset) = {
+            let s = self
+                .sessions
+                .get(index)
+                .ok_or_else(|| anyhow::anyhow!("no session at index"))?;
+            (s.session_id.clone(), s.output_offset)
+        };
+        let daemon = self.daemon()?;
+        let (data, new_offset) = daemon.read_output(&session_id, 0)?;
+        if let Some(s) = self.sessions.get_mut(index) {
+            s.output_offset = new_offset;
+        }
+        Ok(String::from_utf8_lossy(&data).to_string())
+    }
+
+    /// Resize the active session's PTY.
+    pub fn resize_active(&mut self, cols: u16, rows: u16) -> Result<()> {
+        let session_id = self
+            .active_session()
+            .map(|s| s.session_id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no active session"))?;
+        let daemon = self.daemon()?;
+        daemon.resize(&session_id, cols, rows)
     }
 
     pub fn active_session(&self) -> Option<&Session> {
@@ -107,8 +233,6 @@ impl SessionManager {
             return;
         }
 
-        // Sort sessions by their position in the saved order.
-        // Sessions not in the saved list go to the end.
         self.sessions.sort_by_key(|s| {
             saved_order
                 .iter()
@@ -118,9 +242,10 @@ impl SessionManager {
     }
 
     fn next_instance_number(&self, project_name: &str) -> u32 {
+        let sanitized = sanitize_name(project_name);
         self.sessions
             .iter()
-            .filter(|s| s.project_name == project_name)
+            .filter(|s| sanitize_name(&s.project_name) == sanitized)
             .map(|s| s.instance_number)
             .max()
             .unwrap_or(0)
@@ -129,6 +254,19 @@ impl SessionManager {
 }
 
 const TAB_ORDER_FILE: &str = "/tmp/aide-tab-order";
+
+/// Sanitize a name for use as a session ID (replace dots and special chars).
+fn sanitize_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
 
 fn parse_session_name(name: &str) -> Option<(String, u32)> {
     let last_underscore = name.rfind('_')?;
@@ -139,17 +277,4 @@ fn parse_session_name(name: &str) -> Option<(String, u32)> {
         return None;
     }
     Some((project.to_string(), num))
-}
-
-fn get_session_directory(session_name: &str) -> Result<String> {
-    let output = std::process::Command::new("tmux")
-        .args([
-            "display-message",
-            "-t",
-            session_name,
-            "-p",
-            "#{pane_current_path}",
-        ])
-        .output()?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

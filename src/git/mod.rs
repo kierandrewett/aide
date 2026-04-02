@@ -91,6 +91,69 @@ pub fn diff_stats(directory: &str) -> Option<(usize, usize)> {
     Some((added, deleted))
 }
 
+/// Get per-file diff stats (filename -> (added, deleted)) for working tree + staged.
+pub fn file_diff_stats(directory: &str) -> std::collections::HashMap<String, (usize, usize)> {
+    let mut stats: std::collections::HashMap<String, (usize, usize)> =
+        std::collections::HashMap::new();
+
+    // Working tree changes
+    if let Ok(output) = Command::new("git")
+        .args(["diff", "--numstat"])
+        .current_dir(directory)
+        .output()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let added = parts[0].parse::<usize>().unwrap_or(0);
+                let deleted = parts[1].parse::<usize>().unwrap_or(0);
+                let filename = parts[2].to_string();
+                let entry = stats.entry(filename).or_insert((0, 0));
+                entry.0 += added;
+                entry.1 += deleted;
+            }
+        }
+    }
+
+    // Staged changes
+    if let Ok(output) = Command::new("git")
+        .args(["diff", "--numstat", "--cached"])
+        .current_dir(directory)
+        .output()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let added = parts[0].parse::<usize>().unwrap_or(0);
+                let deleted = parts[1].parse::<usize>().unwrap_or(0);
+                let filename = parts[2].to_string();
+                let entry = stats.entry(filename).or_insert((0, 0));
+                entry.0 += added;
+                entry.1 += deleted;
+            }
+        }
+    }
+
+    stats
+}
+
+/// List local branch names, current branch first.
+pub fn list_branches(directory: &str) -> Vec<String> {
+    let output = match Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(directory)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 /// Get push/pull counts relative to upstream.
 /// Returns (behind, ahead) or None if no upstream.
 pub fn upstream_counts(directory: &str) -> Option<(usize, usize)> {

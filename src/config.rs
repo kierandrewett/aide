@@ -12,12 +12,29 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         Self {
-            command: "claude".to_string(),
-            projects_dir: format!("{}/dev", home),
+            command: "$SHELL".to_string(),
+            projects_dir: "$HOME/dev".to_string(),
         }
     }
+}
+
+/// Resolve environment variables in a string (e.g. "$SHELL" -> "/bin/zsh").
+fn resolve_env_vars(s: &str) -> String {
+    let mut result = s.to_string();
+    while let Some(start) = result.find('$') {
+        let rest = &result[start + 1..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(rest.len());
+        let var_name = &rest[..end];
+        if var_name.is_empty() {
+            break;
+        }
+        let value = std::env::var(var_name).unwrap_or_default();
+        result = format!("{}{}{}", &result[..start], value, &rest[end..]);
+    }
+    result
 }
 
 impl Config {
@@ -28,12 +45,19 @@ impl Config {
         if !path.exists() {
             let config = Config::default();
             config.save()?;
-            return Ok(config);
+            return Ok(config.resolve());
         }
 
         let contents = std::fs::read_to_string(&path)?;
         let config: Config = toml::from_str(&contents)?;
-        Ok(config)
+        Ok(config.resolve())
+    }
+
+    /// Resolve environment variables in all string fields.
+    fn resolve(mut self) -> Self {
+        self.command = resolve_env_vars(&self.command);
+        self.projects_dir = resolve_env_vars(&self.projects_dir);
+        self
     }
 
     pub fn save(&self) -> Result<()> {

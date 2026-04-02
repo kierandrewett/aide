@@ -1,7 +1,15 @@
 [package]
 name = "aide"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
+
+[[bin]]
+name = "aide"
+path = "src/main.rs"
+
+[[bin]]
+name = "aide-daemon"
+path = "src/daemon/main.rs"
 
 [dependencies]
 ratatui = "0.28"
@@ -10,5 +18,12 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 ansi-to-tui = "6"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 unicode-width = "0.1"
+nix = { version = "0.31.2", features = ["term", "fs"] }
+signal-hook = { version = "0.4.3", features = ["iterator"] }
+portable-pty = "0.9"
+libc = "0.2"
+vt100 = "0.16.2"
+syntect = "5.3.0"

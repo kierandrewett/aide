@@ -8,37 +8,46 @@ pub enum Action {
     NextTab,
     PrevTab,
     NewInstance,
-    ProjectPicker,
+    CommandPalette,
+    CommandPaletteReverse,
     CloseInstance,
     TogglePanel,
+    ToggleFileBrowser,
+    ToggleFileView,
     Exit,
-    // Picker-only actions (only used when picker/dialog is open)
-    ScrollUp,
-    ScrollDown,
+    // Picker/dialog actions
+    ScrollUp(u16, u16),    // (x, y) mouse position
+    ScrollDown(u16, u16),  // (x, y) mouse position
+    ScrollLeft(u16, u16),  // (x, y) mouse position
+    ScrollRight(u16, u16), // (x, y) mouse position
+    ScrollToTop,
+    ScrollToBottom,
     Confirm,
     Cancel,
     PickerChar(char),
     PickerBackspace,
-    // Forward to tmux — batch of literal chars or a single special key
+    // Forward to PTY
     ForwardChars(String),
     ForwardSpecial(String),
     ForwardCtrl(char),
+    /// Bracketed paste — large text that should be wrapped in paste brackets
+    Paste(String),
+    CopySelection,
     EscapeKey,
     MouseClick(u16, u16),
+    MouseDrag(u16, u16),
+    MouseRelease(u16, u16),
     None,
 }
 
 /// Drain all pending events, returning a list of actions.
-/// Batches consecutive character inputs into a single ForwardChars.
 pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
     let mut actions = Vec::new();
 
-    // Wait for first event with timeout
     if !event::poll(timeout).unwrap_or(false) {
         return actions;
     }
 
-    // Drain all available events
     loop {
         if !event::poll(Duration::ZERO).unwrap_or(false) {
             break;
@@ -56,11 +65,21 @@ pub fn drain_actions(timeout: Duration, picker_mode: bool) -> Vec<Action> {
                     actions.push(action);
                 }
             }
+            Ok(Event::Paste(text)) => {
+                // Bracketed paste — send as paste action for proper handling
+                if !text.is_empty() {
+                    actions.push(Action::Paste(text));
+                }
+            }
+            Ok(Event::Resize(..)) => {
+                // Terminal resized — continue draining. The main loop
+                // detects the new dimensions via ratatui layout on the
+                // next draw and resizes the PTY accordingly.
+            }
             _ => break,
         }
     }
 
-    // Batch consecutive ForwardChars
     coalesce_chars(actions)
 }
 
@@ -90,7 +109,7 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         return Action::None;
     }
 
-    // Aide-reserved bindings — always intercepted
+    // Aide-reserved bindings
     match key {
         KeyEvent {
             code: KeyCode::Char('t'),
@@ -99,9 +118,18 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         } => return Action::NewInstance,
         KeyEvent {
             code: KeyCode::Char('p'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL)
+            && modifiers.contains(KeyModifiers::SHIFT) =>
+        {
+            return Action::CommandPaletteReverse
+        }
+        KeyEvent {
+            code: KeyCode::Char('p'),
             modifiers: KeyModifiers::CONTROL,
             ..
-        } => return Action::ProjectPicker,
+        } => return Action::CommandPalette,
         KeyEvent {
             code: KeyCode::Char('w'),
             modifiers: KeyModifiers::CONTROL,
@@ -112,6 +140,16 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             modifiers: KeyModifiers::CONTROL,
             ..
         } => return Action::TogglePanel,
+        KeyEvent {
+            code: KeyCode::Char('b'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => return Action::ToggleFileBrowser,
+        KeyEvent {
+            code: KeyCode::Char('f'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => return Action::ToggleFileView,
         KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers::CONTROL,
@@ -140,11 +178,11 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             } => Action::Cancel,
             KeyEvent {
                 code: KeyCode::Up, ..
-            } => Action::ScrollUp,
+            } => Action::ScrollUp(0, 0),
             KeyEvent {
                 code: KeyCode::Down,
                 ..
-            } => Action::ScrollDown,
+            } => Action::ScrollDown(0, 0),
             KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
@@ -158,9 +196,19 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         };
     }
 
-    // Forward to tmux
+    // Forward to PTY
     match (&key.code, key.modifiers) {
+        // Ctrl+Shift+C = copy selection (crossterm may report 'c' or 'C')
+        (KeyCode::Char('c' | 'C'), mods)
+            if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) =>
+        {
+            Action::CopySelection
+        }
         (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => Action::ForwardCtrl(*c),
+        // Shift+Enter sends newline
+        (KeyCode::Enter, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Enter".into())
+        }
         (KeyCode::Char(c), _) => Action::ForwardChars(c.to_string()),
         (KeyCode::Enter, _) => Action::ForwardSpecial("Enter".into()),
         (KeyCode::Backspace, _) => Action::ForwardSpecial("BSpace".into()),
@@ -171,8 +219,10 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
         (KeyCode::Right, _) => Action::ForwardSpecial("Right".into()),
         (KeyCode::Home, _) => Action::ForwardSpecial("Home".into()),
         (KeyCode::End, _) => Action::ForwardSpecial("End".into()),
-        (KeyCode::PageUp, _) => Action::ScrollUp,
-        (KeyCode::PageDown, _) => Action::ScrollDown,
+        (KeyCode::PageUp, mods) if mods.contains(KeyModifiers::CONTROL) => Action::ScrollToTop,
+        (KeyCode::PageDown, mods) if mods.contains(KeyModifiers::CONTROL) => Action::ScrollToBottom,
+        (KeyCode::PageUp, _) => Action::ScrollUp(0, 0),
+        (KeyCode::PageDown, _) => Action::ScrollDown(0, 0),
         (KeyCode::Delete, _) => Action::ForwardSpecial("DC".into()),
         (KeyCode::Insert, _) => Action::ForwardSpecial("IC".into()),
         (KeyCode::F(n), _) => Action::ForwardSpecial(format!("F{}", n)),
@@ -182,10 +232,18 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
 
 fn map_mouse(mouse: MouseEvent) -> Option<Action> {
     match mouse.kind {
-        MouseEventKind::ScrollUp => Some(Action::ScrollUp),
-        MouseEventKind::ScrollDown => Some(Action::ScrollDown),
+        MouseEventKind::ScrollUp => Some(Action::ScrollUp(mouse.column, mouse.row)),
+        MouseEventKind::ScrollDown => Some(Action::ScrollDown(mouse.column, mouse.row)),
+        MouseEventKind::ScrollLeft => Some(Action::ScrollLeft(mouse.column, mouse.row)),
+        MouseEventKind::ScrollRight => Some(Action::ScrollRight(mouse.column, mouse.row)),
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             Some(Action::MouseClick(mouse.column, mouse.row))
+        }
+        MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+            Some(Action::MouseDrag(mouse.column, mouse.row))
+        }
+        MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+            Some(Action::MouseRelease(mouse.column, mouse.row))
         }
         _ => None,
     }
