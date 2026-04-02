@@ -31,7 +31,7 @@ fn main() {
     // cannot write to it via /dev/tty
     unsafe {
         libc::setsid();
-        libc::ioctl(0, libc::TIOCNOTTY);
+        libc::ioctl(0, libc::TIOCNOTTY as _);
 
         // Close ALL inherited file descriptors above stderr.
         // The parent (aide) has the real terminal on fd 1 (stdout).
