@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 
 use crate::config::Config;
 use crate::filebrowser::FileBrowser;
-use crate::git;
+use crate::git::{self, GitWorker};
 use crate::sessions::SessionManager;
 
 /// A background job (e.g. git push) that runs outside the PTY.
@@ -139,6 +139,10 @@ pub struct App {
     // Sub-areas for git panel click detection
     pub git_status_area: Rect,
     pub git_log_area: Rect,
+    // Background git worker
+    pub git_worker: GitWorker,
+    /// Cached command palette items (regenerated only on filter change)
+    pub cached_palette_items: Option<Vec<PaletteItem>>,
 }
 
 impl App {
@@ -210,6 +214,8 @@ impl App {
             needs_full_repaint: false,
             git_status_area: Rect::default(),
             git_log_area: Rect::default(),
+            git_worker: GitWorker::new(),
+            cached_palette_items: None,
         }
     }
 
@@ -229,21 +235,9 @@ impl App {
             }
 
             if !dir.is_empty() {
-                if let Ok(status) = git::status_short(&dir) {
-                    self.git_status = status;
-                }
-                if let Ok(log) = git::log_oneline(&dir, self.git_log_limit) {
-                    let line_count = log.lines().count();
-                    self.git_log_has_more = line_count >= self.git_log_limit;
-                    self.git_log = log;
-                }
-                if let Ok(branch) = git::current_branch(&dir) {
-                    self.git_branch = branch;
-                }
-                self.git_upstream = git::upstream_counts(&dir);
-                self.git_diff_stats = git::diff_stats(&dir);
-                self.git_remote_branch = git::remote_tracking_branch(&dir).unwrap_or_default();
-                self.git_file_stats = git::file_diff_stats(&dir);
+                // Kick off background git refresh
+                self.git_worker
+                    .request_refresh(&dir, self.git_log_limit);
 
                 // Update file browser root
                 self.file_browser.set_root(&dir);
@@ -257,6 +251,22 @@ impl App {
             self.git_diff_stats = None;
             self.git_remote_branch.clear();
             self.git_file_stats.clear();
+        }
+    }
+
+    /// Poll the git worker for new data. Called every frame — cheap if
+    /// no snapshot is ready.
+    pub fn poll_git(&mut self) {
+        if let Some(snap) = self.git_worker.take_snapshot() {
+            self.git_status = snap.status.clone();
+            self.git_log = snap.log;
+            self.git_branch = snap.branch;
+            self.git_remote_branch = snap.remote_branch;
+            self.git_upstream = snap.upstream;
+            self.git_diff_stats = snap.diff_stats;
+            self.git_file_stats = snap.file_stats;
+            self.git_log_has_more = snap.log_has_more;
+            self.file_browser.update_git_status(&snap.status);
         }
     }
 
@@ -401,6 +411,7 @@ impl App {
         self.show_command_palette = true;
         self.command_palette_filter.clear();
         self.command_palette_selected = 0;
+        self.cached_palette_items = None;
     }
 
     pub fn close_command_palette(&mut self) {
@@ -408,6 +419,12 @@ impl App {
         self.show_picker = false;
         self.command_palette_filter.clear();
         self.command_palette_selected = 0;
+        self.cached_palette_items = None;
+    }
+
+    /// Invalidate the palette cache (call when filter changes).
+    pub fn invalidate_palette_cache(&mut self) {
+        self.cached_palette_items = None;
     }
 
     pub fn command_palette_items(&self) -> Vec<PaletteItem> {
@@ -516,7 +533,7 @@ impl App {
     }
 
     pub fn command_palette_confirm(&mut self) {
-        let items = self.command_palette_items();
+        let items = self.palette_items_cached();
         if let Some(item) = items.get(self.command_palette_selected).cloned() {
             let was_on_welcome = self.is_on_welcome();
             self.close_command_palette();
@@ -564,15 +581,25 @@ impl App {
         }
     }
 
+    /// Get (and cache) command palette items.
+    pub fn palette_items_cached(&mut self) -> Vec<PaletteItem> {
+        if let Some(ref items) = self.cached_palette_items {
+            return items.clone();
+        }
+        let items = self.command_palette_items();
+        self.cached_palette_items = Some(items.clone());
+        items
+    }
+
     pub fn command_palette_move_down(&mut self) {
-        let count = self.command_palette_items().len();
+        let count = self.palette_items_cached().len();
         if count > 0 {
             self.command_palette_selected = (self.command_palette_selected + 1) % count;
         }
     }
 
     pub fn command_palette_move_up(&mut self) {
-        let count = self.command_palette_items().len();
+        let count = self.palette_items_cached().len();
         if count > 0 {
             self.command_palette_selected = if self.command_palette_selected == 0 {
                 count - 1

@@ -3,6 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Bump this when the wire format changes (e.g. hex→base64).
+/// Client checks on connect; mismatched daemon is killed and respawned.
+pub const PROTOCOL_VERSION: u32 = 2;
+
 /// Request from client to daemon.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -40,6 +44,8 @@ pub enum Request {
     Ping,
     /// Ask daemon to shut down.
     Shutdown,
+    /// Get protocol version.
+    Version,
 }
 
 /// Response from daemon to client.
@@ -61,6 +67,9 @@ pub enum Response {
     },
     SessionCreated {
         session_id: String,
+    },
+    ProtocolVersion {
+        version: u32,
     },
 }
 
@@ -100,18 +109,72 @@ pub fn log_path() -> std::path::PathBuf {
 mod base64_bytes {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
     pub fn serialize<S: Serializer>(data: &[u8], ser: S) -> Result<S::Ok, S::Error> {
-        // Simple hex encoding for now — fast enough and no extra deps
-        let hex: String = data.iter().map(|b| format!("{:02x}", b)).collect();
-        hex.serialize(ser)
+        let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
+        for chunk in data.chunks(3) {
+            let b0 = chunk[0] as u32;
+            let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+            let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+            let n = (b0 << 16) | (b1 << 8) | b2;
+            result.push(CHARS[((n >> 18) & 63) as usize] as char);
+            result.push(CHARS[((n >> 12) & 63) as usize] as char);
+            if chunk.len() > 1 {
+                result.push(CHARS[((n >> 6) & 63) as usize] as char);
+            } else {
+                result.push('=');
+            }
+            if chunk.len() > 2 {
+                result.push(CHARS[(n & 63) as usize] as char);
+            } else {
+                result.push('=');
+            }
+        }
+        result.serialize(ser)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Vec<u8>, D::Error> {
-        let hex = String::deserialize(de)?;
-        let bytes: Result<Vec<u8>, _> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
-            .collect();
-        bytes.map_err(serde::de::Error::custom)
+        let encoded = String::deserialize(de)?;
+        let bytes = encoded.as_bytes();
+        let mut result = Vec::with_capacity(bytes.len() * 3 / 4);
+
+        for chunk in bytes.chunks(4) {
+            if chunk.len() < 2 {
+                break;
+            }
+            let a = decode_char(chunk[0]) as u32;
+            let b = decode_char(chunk[1]) as u32;
+            let c = if chunk.len() > 2 && chunk[2] != b'=' {
+                decode_char(chunk[2]) as u32
+            } else {
+                0
+            };
+            let d = if chunk.len() > 3 && chunk[3] != b'=' {
+                decode_char(chunk[3]) as u32
+            } else {
+                0
+            };
+            let n = (a << 18) | (b << 12) | (c << 6) | d;
+            result.push((n >> 16) as u8);
+            if chunk.len() > 2 && chunk[2] != b'=' {
+                result.push((n >> 8) as u8);
+            }
+            if chunk.len() > 3 && chunk[3] != b'=' {
+                result.push(n as u8);
+            }
+        }
+        Ok(result)
+    }
+
+    fn decode_char(c: u8) -> u8 {
+        match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => 0,
+        }
     }
 }

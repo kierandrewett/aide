@@ -10,7 +10,6 @@ pub struct Session {
     pub directory: String,
     pub instance_number: u32,
     pub has_notification: bool,
-    pub last_output_len: usize,
     /// Byte offset into the daemon output buffer for incremental reads.
     pub output_offset: usize,
 }
@@ -64,7 +63,6 @@ impl SessionManager {
                     directory: info.cwd,
                     instance_number: num,
                     has_notification: false,
-                    last_output_len: 0,
                     output_offset: 0,
                 });
             }
@@ -89,7 +87,7 @@ impl SessionManager {
             directory: directory.to_string(),
             instance_number,
             has_notification: false,
-            last_output_len: 0,
+
             output_offset: 0,
         });
 
@@ -185,9 +183,9 @@ impl SessionManager {
         Ok((data, new_offset))
     }
 
-    /// Read output from a specific session by index.
-    pub fn read_output_for(&mut self, index: usize) -> Result<String> {
-        let (session_id, _offset) = {
+    /// Read incremental raw bytes from a specific session by index.
+    pub fn read_output_bytes_for(&mut self, index: usize) -> Result<(Vec<u8>, usize)> {
+        let (session_id, offset) = {
             let s = self
                 .sessions
                 .get(index)
@@ -195,11 +193,7 @@ impl SessionManager {
             (s.session_id.clone(), s.output_offset)
         };
         let daemon = self.daemon()?;
-        let (data, new_offset) = daemon.read_output(&session_id, 0)?;
-        if let Some(s) = self.sessions.get_mut(index) {
-            s.output_offset = new_offset;
-        }
-        Ok(String::from_utf8_lossy(&data).to_string())
+        daemon.read_output(&session_id, offset)
     }
 
     /// Resize the active session's PTY.

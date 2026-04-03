@@ -726,14 +726,10 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
     if let Some(parser) = &mut app.pty_parser {
         let screen = parser.screen_mut();
 
-        // Ensure vt100 screen matches current render area dimensions.
-        // This must happen here (not in the main loop) because the output
-        // area size is only known during layout computation.
-        let (cur_rows, cur_cols) = screen.size();
-        if cur_cols != inner_width || cur_rows != inner_height {
-            screen.set_size(inner_height.max(1), inner_width.max(1));
-        }
-        let (_rows, _cols) = screen.size();
+        // Note: vt100 screen resizing is handled by the main loop
+        // (which also resizes the daemon PTY). We don't resize here to
+        // avoid one-frame reflow artifacts where the screen is resized
+        // but the child process hasn't redrawn yet.
 
         // Get max scrollback available
         screen.set_scrollback(usize::MAX);
@@ -791,7 +787,14 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
                 let buf = frame.buffer_mut();
                 if let Some(cell) = buf.cell_mut((cx, cy)) {
                     if is_focused {
-                        // Inverted fg/bg for focused cursor
+                        // If the cell already has REVERSED modifier, remove it
+                        // before swapping — otherwise the double-inversion
+                        // makes the cursor invisible on inverse text.
+                        let already_reversed =
+                            cell.modifier.contains(Modifier::REVERSED);
+                        if already_reversed {
+                            cell.modifier.remove(Modifier::REVERSED);
+                        }
                         let fg = cell.fg;
                         let bg = cell.bg;
                         let new_fg = if bg == Color::Reset { Color::Black } else { bg };
@@ -1554,7 +1557,7 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, dialog_area);
 }
 
-fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_command_palette(frame: &mut Frame, app: &mut App, area: Rect) {
     let dialog_width = 60u16.min(area.width.saturating_sub(4));
     let dialog_height = 20u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(dialog_width)) / 2;
@@ -1567,7 +1570,7 @@ fn draw_command_palette(frame: &mut Frame, app: &App, area: Rect) {
     let inner_height = dialog_height.saturating_sub(2) as usize;
 
     let palette_items = if app.show_command_palette {
-        app.command_palette_items()
+        app.palette_items_cached()
     } else {
         let filtered = app.filtered_projects();
         filtered

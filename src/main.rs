@@ -101,13 +101,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
     app.is_narrow = size.width < 100;
 
     let tick_rate = Duration::from_millis(33); // ~30fps
-    let mut last_git_status_refresh = Instant::now();
-    let mut last_git_log_refresh = Instant::now();
+    let mut last_git_refresh = Instant::now();
     let mut last_output_refresh = Instant::now();
     let mut last_resize = (0u16, 0u16);
 
-    let git_status_interval = Duration::from_secs(2);
-    let git_log_interval = Duration::from_secs(3);
+    let git_refresh_interval = Duration::from_secs(2);
     let output_interval_active = Duration::from_millis(33);
     let output_interval_idle = Duration::from_millis(200);
     let mut last_bg_check = Instant::now();
@@ -166,13 +164,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             last_output_refresh = now;
         }
 
-        if now.duration_since(last_git_status_refresh) >= git_status_interval {
-            refresh_git_status(&mut app);
-            last_git_status_refresh = now;
-        }
-        if now.duration_since(last_git_log_refresh) >= git_log_interval {
-            refresh_git_log(&mut app);
-            last_git_log_refresh = now;
+        // Poll background git worker for results (non-blocking)
+        app.poll_git();
+
+        // Request a new git refresh periodically
+        if now.duration_since(last_git_refresh) >= git_refresh_interval {
+            request_git_refresh(&app);
+            last_git_refresh = now;
         }
 
         if now.duration_since(last_bg_check) >= bg_check_interval {
@@ -246,10 +244,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     Action::PickerChar(c) => {
                         app.command_palette_filter.push(c);
                         app.command_palette_selected = 0;
+                        app.invalidate_palette_cache();
                     }
                     Action::PickerBackspace => {
                         app.command_palette_filter.pop();
                         app.command_palette_selected = 0;
+                        app.invalidate_palette_cache();
                     }
                     Action::ScrollDown(..) | Action::NextTab | Action::CommandPalette => {
                         app.command_palette_move_down();
@@ -591,7 +591,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                             let log_lines = app.git_log.lines().count() as u16;
                             if app.git_log_has_more && app.git_log_scroll + 40 >= log_lines {
                                 app.git_log_limit += 200;
-                                refresh_git_log(&mut app);
+                                request_git_refresh(&app);
                             }
                         }
                         ScrollPanel::Output => {
@@ -1109,6 +1109,10 @@ fn refresh_output(app: &mut App) {
             parser.process(&full_data);
             app.pty_parser = Some(parser);
             app.pty_last_len = full_offset;
+            // Buffer was truncated — snap to bottom and force repaint
+            app.scroll_offset = 0;
+            app.follow_mode = true;
+            app.needs_full_repaint = true;
         } else if !data.is_empty() {
             // Check for \x1b[3J (erase scrollback) which vt100 doesn't
             // handle. If found, recreate the parser with only the current
@@ -1142,6 +1146,10 @@ fn refresh_output(app: &mut App) {
                 }
                 app.scroll_offset = 0;
                 app.follow_mode = true;
+                // Force a full repaint so ratatui doesn't diff against
+                // the stale frame buffer from before the scrollback was
+                // erased — otherwise ghost lines remain on screen.
+                app.needs_full_repaint = true;
             }
         }
         // else: no new data, skip
@@ -1173,35 +1181,11 @@ fn refresh_output(app: &mut App) {
     }
 }
 
-fn refresh_git_status(app: &mut App) {
+fn request_git_refresh(app: &App) {
     if let Some(session) = app.session_manager.active_session() {
-        let dir = session.directory.clone();
+        let dir = &session.directory;
         if !dir.is_empty() {
-            if let Ok(status) = git::status_short(&dir) {
-                app.git_status = status.clone();
-                // Update file browser git indicators
-                app.file_browser.update_git_status(&status);
-            }
-            if let Ok(branch) = git::current_branch(&dir) {
-                app.git_branch = branch;
-            }
-            app.git_upstream = git::upstream_counts(&dir);
-            app.git_diff_stats = git::diff_stats(&dir);
-            app.git_remote_branch = git::remote_tracking_branch(&dir).unwrap_or_default();
-            app.git_file_stats = git::file_diff_stats(&dir);
-        }
-    }
-}
-
-fn refresh_git_log(app: &mut App) {
-    if let Some(session) = app.session_manager.active_session() {
-        let dir = session.directory.clone();
-        if !dir.is_empty() {
-            if let Ok(log) = git::log_oneline(&dir, app.git_log_limit) {
-                let line_count = log.lines().count();
-                app.git_log_has_more = line_count >= app.git_log_limit;
-                app.git_log = log;
-            }
+            app.git_worker.request_refresh(dir, app.git_log_limit);
         }
     }
 }
@@ -1211,22 +1195,17 @@ fn check_background_notifications(app: &mut App) {
     let count = app.session_manager.sessions.len();
     for i in 0..count {
         if i == active {
-            if let Ok(output) = app.session_manager.read_output_for(i) {
-                let trimmed_len = output.trim().len();
-                if let Some(s) = app.session_manager.sessions.get_mut(i) {
-                    s.last_output_len = trimmed_len;
-                }
-            }
             continue;
         }
-
-        if let Ok(output) = app.session_manager.read_output_for(i) {
-            let trimmed_len = output.trim().len();
+        // Use the stored output_offset to detect new data without a full read.
+        // read_output_bytes_for returns only bytes since the last offset, so
+        // we just check if anything new arrived.
+        if let Ok((data, new_offset)) = app.session_manager.read_output_bytes_for(i) {
             if let Some(s) = app.session_manager.sessions.get_mut(i) {
-                if trimmed_len > s.last_output_len + 50 {
+                if !data.is_empty() && data.len() > 50 {
                     s.has_notification = true;
                 }
-                s.last_output_len = trimmed_len;
+                s.output_offset = new_offset;
             }
         }
     }
