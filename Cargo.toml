@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "aide-daemon"
 path = "src/daemon/main.rs"
 
+[[bin]]
+name = "aide-editor"
+path = "src/aide_editor/main.rs"
+
 [dependencies]
 ratatui = "0.28"
 crossterm = "0.28"
@@ -26,4 +30,22 @@ signal-hook = { version = "0.4.3", features = ["iterator"] }
 portable-pty = "0.9"
 libc = "0.2"
 vt100 = "0.16.2"
-syntect = "5.3.0"
+log = "0.4"
+simplelog = "0.12"
+# Tree-sitter for aide-editor syntax highlighting
+# Grammar crates using ABI v15 require tree-sitter >=0.25
+tree-sitter = "0.25"
+tree-sitter-highlight = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-bash = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-md = "=0.5.1"
+detect-lang = "0.1"
+tree-sitter-yaml = "0.7"

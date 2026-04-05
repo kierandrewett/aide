@@ -106,6 +106,244 @@ pub fn log_path() -> std::path::PathBuf {
     dir.join("daemon.log")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Serialization round-trips ────────────────────────────────────────────
+
+    #[test]
+    fn roundtrip_list_sessions() {
+        let req = Request::ListSessions;
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Request::ListSessions));
+    }
+
+    #[test]
+    fn roundtrip_create_session() {
+        let req = Request::CreateSession {
+            session_id: "s1".to_string(),
+            cwd: "/home/user/dev".to_string(),
+            command: "/bin/bash".to_string(),
+            args: vec!["-l".to_string()],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        match back {
+            Request::CreateSession {
+                session_id,
+                cwd,
+                command,
+                args,
+            } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(cwd, "/home/user/dev");
+                assert_eq!(command, "/bin/bash");
+                assert_eq!(args, vec!["-l"]);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_write_input_binary() {
+        // Binary payload including non-UTF-8 bytes
+        let payload: Vec<u8> = (0u8..=255u8).collect();
+        let req = Request::WriteInput {
+            session_id: "sess".to_string(),
+            data: payload.clone(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        match back {
+            Request::WriteInput { session_id, data } => {
+                assert_eq!(session_id, "sess");
+                assert_eq!(data, payload);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_write_input_empty() {
+        let req = Request::WriteInput {
+            session_id: "s".to_string(),
+            data: vec![],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        match back {
+            Request::WriteInput { data, .. } => assert!(data.is_empty()),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_read_output() {
+        let req = Request::ReadOutput {
+            session_id: "s2".to_string(),
+            since_offset: 42,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        match back {
+            Request::ReadOutput {
+                session_id,
+                since_offset,
+            } => {
+                assert_eq!(session_id, "s2");
+                assert_eq!(since_offset, 42);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_resize() {
+        let req = Request::Resize {
+            session_id: "s3".to_string(),
+            cols: 200,
+            rows: 50,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        match back {
+            Request::Resize {
+                session_id,
+                cols,
+                rows,
+            } => {
+                assert_eq!(session_id, "s3");
+                assert_eq!(cols, 200);
+                assert_eq!(rows, 50);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_ping_pong() {
+        let req = Request::Ping;
+        let json = serde_json::to_string(&req).unwrap();
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Request::Ping));
+
+        let resp = Response::Pong;
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, Response::Pong));
+    }
+
+    #[test]
+    fn roundtrip_response_error() {
+        let resp = Response::Error {
+            message: "something went wrong".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        match back {
+            Response::Error { message } => assert_eq!(message, "something went wrong"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_response_output_binary() {
+        let payload: Vec<u8> = vec![0x1b, b'[', b'1', b'm', b'H', b'i', 0x1b, b'[', b'm'];
+        let resp = Response::Output {
+            data: payload.clone(),
+            offset: 1024,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        match back {
+            Response::Output { data, offset } => {
+                assert_eq!(data, payload);
+                assert_eq!(offset, 1024);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_session_list() {
+        let resp = Response::SessionList {
+            sessions: vec![
+                SessionInfo {
+                    session_id: "a".to_string(),
+                    cwd: "/tmp".to_string(),
+                    alive: true,
+                },
+                SessionInfo {
+                    session_id: "b".to_string(),
+                    cwd: "/home".to_string(),
+                    alive: false,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        match back {
+            Response::SessionList { sessions } => {
+                assert_eq!(sessions.len(), 2);
+                assert_eq!(sessions[0].session_id, "a");
+                assert!(sessions[0].alive);
+                assert!(!sessions[1].alive);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_protocol_version() {
+        let resp = Response::ProtocolVersion {
+            version: PROTOCOL_VERSION,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: Response = serde_json::from_str(&json).unwrap();
+        match back {
+            Response::ProtocolVersion { version } => assert_eq!(version, PROTOCOL_VERSION),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    // ── base64 encoding specifics ────────────────────────────────────────────
+
+    #[test]
+    fn base64_known_vectors() {
+        // "Man" -> "TWFu"
+        let req = Request::WriteInput {
+            session_id: "x".to_string(),
+            data: b"Man".to_vec(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("TWFu"), "expected base64 'TWFu' in {json}");
+    }
+
+    #[test]
+    fn base64_padding_one_byte() {
+        // single byte 0x00 -> "AA=="
+        let req = Request::WriteInput {
+            session_id: "x".to_string(),
+            data: vec![0x00],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("AA=="), "expected 'AA==' in {json}");
+    }
+
+    #[test]
+    fn base64_padding_two_bytes() {
+        // two bytes 0x00 0x00 -> "AAA="
+        let req = Request::WriteInput {
+            session_id: "x".to_string(),
+            data: vec![0x00, 0x00],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("AAA="), "expected 'AAA=' in {json}");
+    }
+}
+
 mod base64_bytes {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

@@ -155,7 +155,11 @@ fn gather_snapshot(directory: &str, log_limit: usize) -> GitSnapshot {
                         let deleted = parts[1].parse::<usize>().unwrap_or(0);
                         total_added += added;
                         total_deleted += deleted;
-                        let entry = file_stats.entry(parts[2].to_string()).or_insert((0, 0));
+                        // Normalize rename notation: numstat uses "old => new" but
+                        // git status uses "old -> new", so we index by both forms.
+                        let raw = parts[2];
+                        let key = raw.replace(" => ", " -> ");
+                        let entry = file_stats.entry(key).or_insert((0, 0));
                         entry.0 += added;
                         entry.1 += deleted;
                     }
@@ -188,6 +192,77 @@ fn gather_snapshot(directory: &str, log_limit: usize) -> GitSnapshot {
     }
 
     snap
+}
+
+/// Parse `git rev-list --left-right --count` output into (behind, ahead).
+/// Returns None if the output is not in the expected format.
+pub(crate) fn parse_upstream_counts(text: &str) -> Option<(usize, usize)> {
+    let parts: Vec<&str> = text.trim().split('\t').collect();
+    if parts.len() == 2 {
+        let behind = parts[0].parse().ok()?;
+        let ahead = parts[1].parse().ok()?;
+        Some((behind, ahead))
+    } else {
+        None
+    }
+}
+
+/// Parse a single `git diff --numstat` line into (added, deleted, filename).
+/// Returns None if the line is not in the expected format.
+pub(crate) fn parse_numstat_line(line: &str) -> Option<(usize, usize, &str)> {
+    let parts: Vec<&str> = line.split('\t').collect();
+    if parts.len() >= 3 {
+        let added = parts[0].parse().ok()?;
+        let deleted = parts[1].parse().ok()?;
+        Some((added, deleted, parts[2]))
+    } else {
+        None
+    }
+}
+
+/// A file changed in a commit.
+#[derive(Clone, Debug)]
+pub struct CommitFile {
+    /// Single-char status: A, M, D, R, C, T, U…
+    pub status: char,
+    /// Repo-relative path of the file (new path for renames).
+    pub path: String,
+}
+
+/// Fetch the list of files changed by `hash` in `directory`.
+pub fn fetch_commit_files(directory: &str, hash: &str) -> Vec<CommitFile> {
+    let output = match Command::new("git")
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "--name-status",
+            "--diff-filter=ACDMRT",
+            hash,
+        ])
+        .current_dir(directory)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() < 2 {
+                return None;
+            }
+            let status = parts[0].chars().next().unwrap_or('M');
+            // Renames / copies: "R100\told.rs\tnew.rs" — use the new path
+            let path = if parts.len() == 3 && matches!(status, 'R' | 'C') {
+                parts[2].to_string()
+            } else {
+                parts[1].to_string()
+            };
+            Some(CommitFile { status, path })
+        })
+        .collect()
 }
 
 /// List local branch names.

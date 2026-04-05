@@ -1,4 +1,5 @@
 use anyhow::Result;
+use libc;
 
 use crate::pty_backend::DaemonClient;
 
@@ -213,12 +214,12 @@ impl SessionManager {
     /// Save current tab order to /tmp so it persists across aide restarts.
     pub fn save_tab_order(&self) {
         let names: Vec<&str> = self.sessions.iter().map(|s| s.name.as_str()).collect();
-        let _ = std::fs::write(TAB_ORDER_FILE, names.join("\n"));
+        let _ = std::fs::write(tab_order_file(), names.join("\n"));
     }
 
     /// Reorder sessions to match the saved tab order.
     pub fn restore_tab_order(&mut self) {
-        let data = match std::fs::read_to_string(TAB_ORDER_FILE) {
+        let data = match std::fs::read_to_string(tab_order_file()) {
             Ok(d) => d,
             Err(_) => return,
         };
@@ -247,7 +248,11 @@ impl SessionManager {
     }
 }
 
-const TAB_ORDER_FILE: &str = "/tmp/aide-tab-order";
+fn tab_order_file() -> String {
+    // Use the real UID so multiple users on the same machine don't share state.
+    let uid = unsafe { libc::getuid() };
+    format!("/tmp/aide-tab-order-{}", uid)
+}
 
 /// Sanitize a name for use as a session ID (replace dots and special chars).
 fn sanitize_name(name: &str) -> String {
