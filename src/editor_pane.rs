@@ -147,3 +147,9 @@ impl EditorPane {
         matches!(self.child.try_wait(), Ok(None))
     }
 }
+
+impl Drop for EditorPane {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
+}
