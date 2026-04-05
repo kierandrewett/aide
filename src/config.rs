@@ -3,11 +3,22 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub command: String,
     pub projects_dir: String,
+    /// The editor command launched in the file viewer pane.
+    /// Receives the file path as its last argument.
+    /// Set to "nano", "vim", "hx", etc. to use a different editor.
+    pub editor_command: String,
+    /// Show Nerd Font icons in the file browser and status bar.
+    /// Requires a Nerd Font to be configured in your terminal emulator.
+    /// Works in Ghostty and Termius (desktop) when a Nerd Font is active.
+    pub icons: bool,
+    /// Syntax highlighting theme for aide-editor.
+    /// Options: "github-dark", "one-dark", "dracula", "nord", "monokai", "solarized-dark"
+    pub editor_theme: String,
 }
 
 impl Default for Config {
@@ -15,6 +26,9 @@ impl Default for Config {
         Self {
             command: "$SHELL".to_string(),
             projects_dir: "$HOME/dev".to_string(),
+            editor_command: "aide-editor".to_string(),
+            icons: true,
+            editor_theme: "github-dark".to_string(),
         }
     }
 }

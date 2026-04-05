@@ -184,6 +184,18 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
                 ..
             } => Action::ScrollDown(0, 0),
             KeyEvent {
+                code: KeyCode::Left, ..
+            } => Action::ScrollLeft(0, 0),
+            KeyEvent {
+                code: KeyCode::Right, ..
+            } => Action::ScrollRight(0, 0),
+            KeyEvent {
+                code: KeyCode::Tab, ..
+            } => Action::ScrollDown(0, 0),
+            KeyEvent {
+                code: KeyCode::BackTab, ..
+            } => Action::ScrollUp(0, 0),
+            KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
                 ..
@@ -205,25 +217,99 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
             Action::CopySelection
         }
         (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::CONTROL) => Action::ForwardCtrl(*c),
+        (KeyCode::Char(c), mods) if mods.contains(KeyModifiers::ALT) => {
+            Action::ForwardSpecial(format!("A-{}", c))
+        }
         // Shift+Enter sends newline
         (KeyCode::Enter, mods) if mods.contains(KeyModifiers::SHIFT) => {
             Action::ForwardSpecial("S-Enter".into())
         }
         (KeyCode::Char(c), _) => Action::ForwardChars(c.to_string()),
         (KeyCode::Enter, _) => Action::ForwardSpecial("Enter".into()),
+        (KeyCode::Backspace, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-BSpace".into())
+        }
+        (KeyCode::Backspace, mods) if mods.contains(KeyModifiers::ALT) => {
+            Action::ForwardSpecial("A-BSpace".into())
+        }
         (KeyCode::Backspace, _) => Action::ForwardSpecial("BSpace".into()),
         (KeyCode::Esc, _) => Action::EscapeKey,
+        // Ctrl+Arrow
+        (KeyCode::Up, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-Up".into())
+        }
+        (KeyCode::Down, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-Down".into())
+        }
+        (KeyCode::Left, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-Left".into())
+        }
+        (KeyCode::Right, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-Right".into())
+        }
+        // Shift+Arrow
+        (KeyCode::Up, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Up".into())
+        }
+        (KeyCode::Down, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Down".into())
+        }
+        (KeyCode::Left, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Left".into())
+        }
+        (KeyCode::Right, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Right".into())
+        }
+        // Alt+Arrow
+        (KeyCode::Up, mods) if mods.contains(KeyModifiers::ALT) => {
+            Action::ForwardSpecial("A-Up".into())
+        }
+        (KeyCode::Down, mods) if mods.contains(KeyModifiers::ALT) => {
+            Action::ForwardSpecial("A-Down".into())
+        }
+        (KeyCode::Left, mods) if mods.contains(KeyModifiers::ALT) => {
+            Action::ForwardSpecial("A-Left".into())
+        }
+        (KeyCode::Right, mods) if mods.contains(KeyModifiers::ALT) => {
+            Action::ForwardSpecial("A-Right".into())
+        }
         (KeyCode::Up, _) => Action::ForwardSpecial("Up".into()),
         (KeyCode::Down, _) => Action::ForwardSpecial("Down".into()),
         (KeyCode::Left, _) => Action::ForwardSpecial("Left".into()),
         (KeyCode::Right, _) => Action::ForwardSpecial("Right".into()),
+        // Home / End with modifiers
+        (KeyCode::Home, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-Home".into())
+        }
+        (KeyCode::End, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-End".into())
+        }
+        (KeyCode::Home, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-Home".into())
+        }
+        (KeyCode::End, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-End".into())
+        }
         (KeyCode::Home, _) => Action::ForwardSpecial("Home".into()),
         (KeyCode::End, _) => Action::ForwardSpecial("End".into()),
         (KeyCode::PageUp, mods) if mods.contains(KeyModifiers::CONTROL) => Action::ScrollToTop,
         (KeyCode::PageDown, mods) if mods.contains(KeyModifiers::CONTROL) => Action::ScrollToBottom,
         (KeyCode::PageUp, _) => Action::ScrollUp(0, 0),
         (KeyCode::PageDown, _) => Action::ScrollDown(0, 0),
+        // Delete / Insert with modifiers
+        (KeyCode::Delete, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-DC".into())
+        }
+        (KeyCode::Delete, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-DC".into())
+        }
         (KeyCode::Delete, _) => Action::ForwardSpecial("DC".into()),
+        (KeyCode::Insert, mods) if mods.contains(KeyModifiers::CONTROL) => {
+            Action::ForwardSpecial("C-IC".into())
+        }
+        (KeyCode::Insert, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            Action::ForwardSpecial("S-IC".into())
+        }
         (KeyCode::Insert, _) => Action::ForwardSpecial("IC".into()),
         (KeyCode::F(n), _) => Action::ForwardSpecial(format!("F{}", n)),
         _ => Action::None,

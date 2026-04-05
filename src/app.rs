@@ -1,15 +1,82 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::layout::Rect;
 
 use crate::config::Config;
+use crate::editor_pane::EditorPane;
+
+/// Resolve the editor command, falling back to a sibling binary in the same
+/// directory as the current executable when running in a dev/cargo context.
+/// This lets `aide` find `aide-editor` at `./target/debug/aide-editor` without
+/// requiring it to be installed in PATH.
+fn resolve_editor_command(cmd: &str) -> String {
+    // Only attempt the sibling-binary lookup for commands that are a plain
+    // binary name (no path separators, no arguments yet).
+    let first_token = cmd.split_whitespace().next().unwrap_or(cmd);
+    if !first_token.contains('/') && !first_token.contains('\\') {
+        // Check if the binary is already reachable via PATH.
+        let in_path = std::process::Command::new("which")
+            .arg(first_token)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if !in_path {
+            // Try the directory that contains the currently running executable.
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    let sibling = dir.join(first_token);
+                    if sibling.is_file() {
+                        // Replace just the binary token with the full path, preserving any args.
+                        let rest = cmd[first_token.len()..].to_string();
+                        return format!("{}{}", sibling.to_string_lossy(), rest);
+                    }
+                }
+            }
+        }
+    }
+    cmd.to_string()
+}
 use crate::filebrowser::FileBrowser;
-use crate::git;
+use crate::git::{self, CommitFile, GitWorker};
 use crate::sessions::SessionManager;
+
+/// Severity level for a toast notification.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum NotificationLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+/// A transient toast notification shown in the bottom-right corner.
+pub struct Notification {
+    pub message: String,
+    pub level: NotificationLevel,
+    pub created_at: Instant,
+    /// How long before the notification auto-dismisses.
+    pub ttl: Duration,
+}
+
+impl Notification {
+    pub fn new(message: impl Into<String>, level: NotificationLevel) -> Self {
+        Self {
+            message: message.into(),
+            level,
+            created_at: Instant::now(),
+            ttl: Duration::from_secs(5),
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() >= self.ttl
+    }
+}
 
 /// A background job (e.g. git push) that runs outside the PTY.
 pub struct BackgroundJob {
@@ -30,6 +97,17 @@ pub enum FocusPanel {
     GitStatus,
     GitLog,
     FileBrowser,
+}
+
+/// What a rendered row in the git log panel represents (used for click handling).
+#[derive(Clone)]
+pub enum GitLogRow {
+    /// A commit row — stores the short hash.
+    Commit(String),
+    /// A file row inside an expanded commit.
+    File { hash: String, file_idx: usize },
+    /// A graph-only line (no clickable content).
+    Graph,
 }
 
 #[derive(Clone, Debug)]
@@ -56,8 +134,56 @@ impl vt100::Callbacks for PtyCallbacks {
     }
 }
 
+/// Per-tab snapshot of layout state.
+/// Saved when leaving a tab and restored when returning to it.
+/// The EditorPane (PTY process) is kept in App::editor_panes separately
+/// since it cannot be cloned.
+#[derive(Clone)]
+pub struct TabLayout {
+    // File viewer
+    pub viewing_file: Option<String>,
+    pub show_file_view: bool,
+    // Panels
+    pub show_file_browser: bool,
+    pub focus: FocusPanel,
+    // Terminal scrollback
+    pub scroll_offset: u16,
+    pub follow_mode: bool,
+    // Git panel
+    pub git_log_scroll: u16,
+    pub git_status_scroll: u16,
+    pub git_log_limit: usize,
+    // File browser cursor
+    pub file_browser_selected: usize,
+    pub file_browser_scroll_offset: u16,
+}
+
+impl Default for TabLayout {
+    fn default() -> Self {
+        Self {
+            viewing_file: None,
+            show_file_view: false,
+            show_file_browser: false,
+            focus: FocusPanel::Output,
+            scroll_offset: 0,
+            follow_mode: true,
+            git_log_scroll: 0,
+            git_status_scroll: 0,
+            git_log_limit: 100,
+            file_browser_selected: 0,
+            file_browser_scroll_offset: 0,
+        }
+    }
+}
+
 pub struct App {
     pub session_manager: SessionManager,
+    pub icons: bool,
+    pub config: Config,
+    /// Per-session layout snapshots keyed by session ID.
+    pub tab_layouts: HashMap<String, TabLayout>,
+    /// Per-session EditorPane instances (can't go in TabLayout because not Clone).
+    pub editor_panes: HashMap<String, EditorPane>,
     pub show_right_panel: bool,
     pub show_file_browser: bool,
     pub claude_output: String,
@@ -94,18 +220,20 @@ pub struct App {
     pub file_browser: FileBrowser,
     /// Currently viewed file path (None = no file open)
     pub viewing_file: Option<String>,
-    /// Cached file content for viewer
-    pub file_content: String,
-    /// Pre-highlighted lines cache (avoids re-running syntect every frame)
-    pub file_highlighted: Vec<Vec<(syntect::highlighting::Style, String)>>,
-    /// File viewer vertical scroll offset
-    pub file_scroll: u16,
-    /// File viewer horizontal scroll offset
-    pub file_scroll_h: u16,
-    /// Max horizontal scroll (content width - viewport width), computed during draw
-    pub file_max_scroll_h: u16,
     /// On narrow mode, whether to show file view or terminal
     pub show_file_view: bool,
+    /// Active editor PTY pane (spawned when a file is opened)
+    pub editor_pane: Option<EditorPane>,
+    /// Editor command from config (resolved at startup)
+    pub editor_command: String,
+    /// Dimensions set by draw_file_viewer each frame, used to resize the pane
+    pub editor_pane_rows: u16,
+    pub editor_pane_cols: u16,
+    // Settings modal
+    pub show_settings: bool,
+    pub settings_row: usize,
+    pub settings_editing: bool,
+    pub settings_buf: String,
     // Click target areas
     pub tab_bar_area: Rect,
     pub output_area: Rect,
@@ -128,10 +256,8 @@ pub struct App {
     pub needs_pty_resize: bool,
     /// Set when the terminal needs a full repaint (e.g. after parser reinitialization)
     pub needs_full_repaint: bool,
-    // Text selection state
+    // Text selection state (main terminal only)
     pub selection: Option<TextSelection>,
-    /// Text selection for the file viewer (row = line index, col = character offset)
-    pub file_selection: Option<TextSelection>,
     // Background jobs (git commands etc.)
     pub bg_jobs: Vec<BackgroundJob>,
     /// Message to show briefly in status bar after a job completes
@@ -139,15 +265,44 @@ pub struct App {
     // Sub-areas for git panel click detection
     pub git_status_area: Rect,
     pub git_log_area: Rect,
+    // Expanded commit state (click to toggle)
+    pub expanded_commits: HashSet<String>,
+    pub commit_files: HashMap<String, Vec<CommitFile>>,
+    /// Populated by draw_git_log; maps display-row index → row type for click handling.
+    pub git_log_rows: Vec<GitLogRow>,
+    // Background git worker
+    pub git_worker: GitWorker,
+    /// Cached command palette items (regenerated only on filter change)
+    pub cached_palette_items: Option<Vec<PaletteItem>>,
+    /// Use-count per palette item label — drives MRU ordering when filter is empty.
+    pub palette_usage: HashMap<String, u64>,
+    /// Active toast notifications (bottom-right overlay stack).
+    pub notifications: Vec<Notification>,
+    /// Double-click tracking for git log file rows: (display_row, click_time)
+    pub last_git_log_click: Option<(usize, Instant)>,
+    /// Double-click tracking for git status rows: (row_index, click_time)
+    pub last_git_status_click: Option<(usize, Instant)>,
+    /// Currently selected git status row index (into visible file entries)
+    pub git_status_selected: Option<usize>,
+    /// Currently selected git log display row index
+    pub git_log_selected_row: Option<usize>,
+    /// Content area of the file viewer pane (excludes scrollbar column and borders).
+    /// Set each frame by draw_file_viewer; used by click handler to avoid forwarding scrollbar clicks.
+    pub file_viewer_content_area: Rect,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
         let projects_dir = PathBuf::from(&config.projects_dir);
         let available_projects = discover_projects(&projects_dir);
+        let editor_command = config.editor_command.clone();
 
         Self {
-            session_manager: SessionManager::new(config.command),
+            session_manager: SessionManager::new(config.command.clone()),
+            icons: config.icons,
+            config,
+            tab_layouts: HashMap::new(),
+            editor_panes: HashMap::new(),
             show_right_panel: false,
             show_file_browser: false,
             claude_output: String::new(),
@@ -183,12 +338,15 @@ impl App {
             is_narrow: false,
             file_browser: FileBrowser::new(),
             viewing_file: None,
-            file_content: String::new(),
-            file_highlighted: Vec::new(),
-            file_scroll: 0,
-            file_scroll_h: 0,
-            file_max_scroll_h: 0,
             show_file_view: false,
+            editor_pane: None,
+            editor_command,
+            editor_pane_rows: 24,
+            editor_pane_cols: 80,
+            show_settings: false,
+            settings_row: 0,
+            settings_editing: false,
+            settings_buf: String::new(),
             tab_bar_area: Rect::default(),
             output_area: Rect::default(),
             git_panel_area: Rect::default(),
@@ -198,7 +356,6 @@ impl App {
             cached_project_files: Vec::new(),
             error_message: None,
             selection: None,
-            file_selection: None,
             bg_jobs: Vec::new(),
             status_message: None,
             pty_parser: None,
@@ -210,6 +367,18 @@ impl App {
             needs_full_repaint: false,
             git_status_area: Rect::default(),
             git_log_area: Rect::default(),
+            expanded_commits: HashSet::new(),
+            commit_files: HashMap::new(),
+            git_log_rows: Vec::new(),
+            git_worker: GitWorker::new(),
+            cached_palette_items: None,
+            palette_usage: HashMap::new(),
+            notifications: Vec::new(),
+            last_git_log_click: None,
+            last_git_status_click: None,
+            git_status_selected: None,
+            git_log_selected_row: None,
+            file_viewer_content_area: Rect::default(),
         }
     }
 
@@ -229,21 +398,9 @@ impl App {
             }
 
             if !dir.is_empty() {
-                if let Ok(status) = git::status_short(&dir) {
-                    self.git_status = status;
-                }
-                if let Ok(log) = git::log_oneline(&dir, self.git_log_limit) {
-                    let line_count = log.lines().count();
-                    self.git_log_has_more = line_count >= self.git_log_limit;
-                    self.git_log = log;
-                }
-                if let Ok(branch) = git::current_branch(&dir) {
-                    self.git_branch = branch;
-                }
-                self.git_upstream = git::upstream_counts(&dir);
-                self.git_diff_stats = git::diff_stats(&dir);
-                self.git_remote_branch = git::remote_tracking_branch(&dir).unwrap_or_default();
-                self.git_file_stats = git::file_diff_stats(&dir);
+                // Kick off background git refresh
+                self.git_worker
+                    .request_refresh(&dir, self.git_log_limit);
 
                 // Update file browser root
                 self.file_browser.set_root(&dir);
@@ -257,6 +414,24 @@ impl App {
             self.git_diff_stats = None;
             self.git_remote_branch.clear();
             self.git_file_stats.clear();
+        }
+    }
+
+    /// Poll the git worker for new data. Returns true if a new snapshot arrived.
+    pub fn poll_git(&mut self) -> bool {
+        if let Some(snap) = self.git_worker.take_snapshot() {
+            self.git_status = snap.status.clone();
+            self.git_log = snap.log;
+            self.git_branch = snap.branch;
+            self.git_remote_branch = snap.remote_branch;
+            self.git_upstream = snap.upstream;
+            self.git_diff_stats = snap.diff_stats;
+            self.git_file_stats = snap.file_stats;
+            self.git_log_has_more = snap.log_has_more;
+            self.file_browser.update_git_status(&snap.status);
+            true
+        } else {
+            false
         }
     }
 
@@ -401,6 +576,7 @@ impl App {
         self.show_command_palette = true;
         self.command_palette_filter.clear();
         self.command_palette_selected = 0;
+        self.cached_palette_items = None;
     }
 
     pub fn close_command_palette(&mut self) {
@@ -408,6 +584,12 @@ impl App {
         self.show_picker = false;
         self.command_palette_filter.clear();
         self.command_palette_selected = 0;
+        self.cached_palette_items = None;
+    }
+
+    /// Invalidate the palette cache (call when filter changes).
+    pub fn invalidate_palette_cache(&mut self) {
+        self.cached_palette_items = None;
     }
 
     pub fn command_palette_items(&self) -> Vec<PaletteItem> {
@@ -423,6 +605,7 @@ impl App {
             ("New Tab", PaletteKind::NewTerminal),
             ("Toggle Git Panel", PaletteKind::ToggleGit),
             ("Toggle File Browser", PaletteKind::ToggleFileBrowser),
+            ("Settings", PaletteKind::OpenSettings),
         ];
         for (label, kind) in commands {
             items.push(PaletteItem {
@@ -498,26 +681,49 @@ impl App {
         }
 
         if filter.is_empty() {
+            // Sort by most-recently-used (highest count first); unvisited items stay in place
+            if !self.palette_usage.is_empty() {
+                items.sort_by(|a, b| {
+                    let ua = self.palette_usage.get(&a.label).copied().unwrap_or(0);
+                    let ub = self.palette_usage.get(&b.label).copied().unwrap_or(0);
+                    ub.cmp(&ua)
+                });
+            }
             items
         } else {
-            items
+            let mut scored: Vec<(i32, PaletteItem)> = items
                 .into_iter()
-                .filter(|i| {
+                .filter_map(|i| {
                     let label_norm = normalize_for_match(&i.label.to_lowercase());
                     let subtitle_norm = normalize_for_match(&i.subtitle.to_lowercase());
-                    label_norm.contains(&filter_norm)
-                        || subtitle_norm.contains(&filter_norm)
-                        // Also match the raw filter for exact typed queries
-                        || i.label.to_lowercase().contains(&filter)
-                        || i.subtitle.to_lowercase().contains(&filter)
+                    // Score against label (primary) and subtitle (secondary)
+                    let score = fuzzy_score(&filter_norm, &label_norm)
+                        .or_else(|| fuzzy_score(&filter_norm, &subtitle_norm)
+                            .map(|s| s - 5))  // subtitle matches rank a bit lower
+                        .or_else(|| {
+                            // Fallback: raw filter against unnormalized strings
+                            if i.label.to_lowercase().contains(&filter)
+                                || i.subtitle.to_lowercase().contains(&filter)
+                            {
+                                Some(1)
+                            } else {
+                                None
+                            }
+                        })?;
+                    Some((score, i))
                 })
-                .collect()
+                .collect();
+            // Sort best match first; stable so equal-scored items keep insertion order
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.into_iter().map(|(_, i)| i).collect()
         }
     }
 
     pub fn command_palette_confirm(&mut self) {
-        let items = self.command_palette_items();
+        let items = self.palette_items_cached();
         if let Some(item) = items.get(self.command_palette_selected).cloned() {
+            // Track usage for MRU ordering
+            *self.palette_usage.entry(item.label.clone()).or_insert(0) += 1;
             let was_on_welcome = self.is_on_welcome();
             self.close_command_palette();
             match item.kind {
@@ -560,19 +766,114 @@ impl App {
                         self.spawn_bg_command(&cmd, &cmd, &dir);
                     }
                 }
+                PaletteKind::OpenSettings => {
+                    self.open_settings();
+                }
             }
         }
     }
 
+    pub fn open_settings(&mut self) {
+        self.show_settings = true;
+        self.settings_row = 0;
+        self.settings_editing = false;
+        self.settings_buf.clear();
+    }
+
+    /// Available editor themes in cycle order.
+    pub const EDITOR_THEMES: &'static [(&'static str, &'static str)] = &[
+        ("github-dark",    "GitHub Dark"),
+        ("one-dark",       "One Dark Pro"),
+        ("dracula",        "Dracula"),
+        ("nord",           "Nord"),
+        ("monokai",        "Monokai"),
+        ("solarized-dark", "Solarized Dark"),
+    ];
+
+    /// Called when Enter is pressed on a settings row.
+    pub fn settings_confirm(&mut self) {
+        if self.settings_editing {
+            // Commit the edit
+            match self.settings_row {
+                0 => self.config.command = self.settings_buf.clone(),
+                1 => self.config.editor_command = self.settings_buf.clone(),
+                2 => self.config.projects_dir = self.settings_buf.clone(),
+                _ => {}
+            }
+            self.settings_editing = false;
+            self.settings_buf.clear();
+        } else {
+            match self.settings_row {
+                3 => {
+                    // Toggle icons boolean
+                    self.config.icons = !self.config.icons;
+                    self.icons = self.config.icons;
+                }
+                4 => {
+                    // Cycle theme forward (Enter = next)
+                    self.cycle_theme(1);
+                }
+                _ => {
+                    // Enter edit mode for string fields
+                    self.settings_editing = true;
+                    self.settings_buf = match self.settings_row {
+                        0 => self.config.command.clone(),
+                        1 => self.config.editor_command.clone(),
+                        2 => self.config.projects_dir.clone(),
+                        _ => String::new(),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Cycle the editor theme by `delta` (+1 = next, -1 = prev).
+    pub fn cycle_theme(&mut self, delta: i32) {
+        let themes = Self::EDITOR_THEMES;
+        let cur = themes.iter().position(|(id, _)| *id == self.config.editor_theme)
+            .unwrap_or(0) as i32;
+        let next = ((cur + delta).rem_euclid(themes.len() as i32)) as usize;
+        self.config.editor_theme = themes[next].0.to_string();
+        // Notify the running editor in real time via bracketed-paste side-channel
+        if let Some(ep) = &mut self.editor_pane {
+            let msg = format!("\x1b[200~aide-theme:{}\x1b[201~", self.config.editor_theme);
+            ep.write_input(msg.as_bytes());
+        }
+    }
+
+    /// Save config to disk and apply relevant live changes.
+    pub fn settings_save(&mut self) {
+        if self.settings_editing {
+            self.settings_confirm();
+        }
+        // Apply live
+        self.editor_command = self.config.editor_command.clone();
+        self.icons = self.config.icons;
+        let _ = self.config.save();
+        self.show_settings = false;
+        self.settings_editing = false;
+        self.settings_buf.clear();
+    }
+
+    /// Get (and cache) command palette items.
+    pub fn palette_items_cached(&mut self) -> Vec<PaletteItem> {
+        if let Some(ref items) = self.cached_palette_items {
+            return items.clone();
+        }
+        let items = self.command_palette_items();
+        self.cached_palette_items = Some(items.clone());
+        items
+    }
+
     pub fn command_palette_move_down(&mut self) {
-        let count = self.command_palette_items().len();
+        let count = self.palette_items_cached().len();
         if count > 0 {
             self.command_palette_selected = (self.command_palette_selected + 1) % count;
         }
     }
 
     pub fn command_palette_move_up(&mut self) {
-        let count = self.command_palette_items().len();
+        let count = self.palette_items_cached().len();
         if count > 0 {
             self.command_palette_selected = if self.command_palette_selected == 0 {
                 count - 1
@@ -584,30 +885,29 @@ impl App {
 
     /// Open a file for viewing.
     pub fn open_file(&mut self, path: &str) {
-        match std::fs::read_to_string(path) {
-            Ok(content) => {
+        // Drop any existing editor pane first
+        self.editor_pane = None;
+
+        let rows = self.editor_pane_rows.max(4);
+        let cols = self.editor_pane_cols.max(20);
+        let cmd = resolve_editor_command(&self.editor_command);
+
+        match EditorPane::spawn(&cmd, path, rows, cols, &self.config.editor_theme) {
+            Ok(pane) => {
+                self.editor_pane = Some(pane);
                 self.viewing_file = Some(path.to_string());
-                self.file_highlighted = highlight_file(path, &content);
-                self.file_content = content;
-                self.file_scroll = 0;
-                self.file_scroll_h = 0;
-                self.file_max_scroll_h = 0;
                 self.show_file_view = true;
             }
-            Err(_) => {
-                // Can't read file (binary or permission denied) — ignore
+            Err(e) => {
+                self.error_message = Some(format!("Failed to open editor: {}", e));
             }
         }
     }
 
-    /// Close the file viewer.
+    /// Close the file viewer and kill the editor pane.
     pub fn close_file(&mut self) {
+        self.editor_pane = None;
         self.viewing_file = None;
-        self.file_content.clear();
-        self.file_highlighted.clear();
-        self.file_scroll = 0;
-        self.file_scroll_h = 0;
-        self.file_max_scroll_h = 0;
         self.show_file_view = false;
     }
 
@@ -619,10 +919,92 @@ impl App {
             && self.session_manager.active_index >= self.session_manager.sessions.len()
     }
 
+    /// Snapshot the current layout into `tab_layouts` under the active session ID.
+    /// Also stash the EditorPane in `editor_panes` so it survives tab switching.
+    pub fn save_tab_layout(&mut self) {
+        let id = match self.session_manager.sessions.get(self.session_manager.active_index) {
+            Some(s) => s.session_id.clone(),
+            None => return,
+        };
+        // Move editor pane into the per-session map
+        if let Some(pane) = self.editor_pane.take() {
+            self.editor_panes.insert(id.clone(), pane);
+        } else {
+            self.editor_panes.remove(&id);
+        }
+        self.tab_layouts.insert(id, TabLayout {
+            viewing_file: self.viewing_file.clone(),
+            show_file_view: self.show_file_view,
+            show_file_browser: self.show_file_browser,
+            focus: self.focus,
+            scroll_offset: self.scroll_offset,
+            follow_mode: self.follow_mode,
+            git_log_scroll: self.git_log_scroll,
+            git_status_scroll: self.git_status_scroll,
+            git_log_limit: self.git_log_limit,
+            file_browser_selected: self.file_browser.selected,
+            file_browser_scroll_offset: self.file_browser.scroll_offset,
+        });
+    }
+
+    /// Restore layout from `tab_layouts` for the active session, or apply defaults.
+    pub fn restore_tab_layout(&mut self) {
+        let id = match self.session_manager.sessions.get(self.session_manager.active_index) {
+            Some(s) => s.session_id.clone(),
+            None => {
+                // Welcome screen — reset to defaults
+                self.close_file();
+                self.show_file_browser = false;
+                self.focus = FocusPanel::Output;
+                self.scroll_offset = 0;
+                self.follow_mode = true;
+                self.git_log_scroll = 0;
+                self.git_status_scroll = 0;
+                self.git_log_limit = 100;
+                return;
+            }
+        };
+
+        // Restore the EditorPane for this session
+        self.editor_pane = self.editor_panes.remove(&id);
+
+        let layout = self.tab_layouts.get(&id).cloned().unwrap_or_default();
+        self.viewing_file = layout.viewing_file;
+        self.show_file_view = layout.show_file_view;
+        self.show_file_browser = layout.show_file_browser;
+        self.focus = layout.focus;
+        self.scroll_offset = layout.scroll_offset;
+        self.follow_mode = layout.follow_mode;
+        self.git_log_scroll = layout.git_log_scroll;
+        self.git_status_scroll = layout.git_status_scroll;
+        self.git_log_limit = layout.git_log_limit;
+        self.file_browser.selected = layout.file_browser_selected;
+        self.file_browser.scroll_offset = layout.file_browser_scroll_offset;
+    }
+
     pub fn is_typing(&self) -> bool {
         self.last_input_time
             .map(|t| t.elapsed().as_millis() < 1500)
             .unwrap_or(false)
+    }
+
+    /// Toggle expansion of a commit in the git log panel.
+    /// Fetches changed files on first expand (synchronous, fast).
+    pub fn toggle_commit_expand(&mut self, hash: &str) {
+        if self.expanded_commits.contains(hash) {
+            self.expanded_commits.remove(hash);
+        } else {
+            self.expanded_commits.insert(hash.to_string());
+            if !self.commit_files.contains_key(hash) {
+                if let Some(session) = self.session_manager.active_session() {
+                    let dir = session.directory.clone();
+                    if !dir.is_empty() {
+                        let files = git::fetch_commit_files(&dir, hash);
+                        self.commit_files.insert(hash.to_string(), files);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -647,35 +1029,10 @@ pub enum PaletteKind {
     RunCommand(String),
     /// Switch to a git branch (runs git checkout)
     GitCheckout(String),
+    /// Open the settings modal
+    OpenSettings,
 }
 
-/// Pre-highlight a file's content using syntect. Returns styled ranges per line.
-fn highlight_file(path: &str, content: &str) -> Vec<Vec<(syntect::highlighting::Style, String)>> {
-    use syntect::easy::HighlightLines;
-    use syntect::highlighting::ThemeSet;
-    use syntect::parsing::SyntaxSet;
-
-    let ss = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-eighties.dark"];
-    let syntax = ss
-        .find_syntax_for_file(path)
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| ss.find_syntax_plain_text());
-    let mut h = HighlightLines::new(syntax, theme);
-
-    content
-        .lines()
-        .map(|line| {
-            h.highlight_line(line, &ss)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(style, text)| (style, text.to_string()))
-                .collect()
-        })
-        .collect()
-}
 
 /// Get project files sorted by modification time (most recent first).
 /// Returns (filename, relative_path, absolute_path).
@@ -761,6 +1118,83 @@ fn recent_project_files(dir: &str) -> Vec<(String, String, String)> {
         .into_iter()
         .map(|(name, rel, full, _)| (name, rel, full))
         .collect()
+}
+
+/// Subsequence fuzzy match with scoring.
+/// Returns None if the query cannot be matched as a subsequence of target.
+/// Score bonuses: consecutive runs, word-boundary starts.
+fn subsequence_score(query: &str, target: &str) -> Option<i32> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    let q: Vec<char> = query.chars().collect();
+    let t: Vec<char> = target.chars().collect();
+
+    let mut score = 0i32;
+    let mut qi = 0usize;
+    let mut last_ti: Option<usize> = None;
+    let mut run = 0i32;
+
+    for ti in 0..t.len() {
+        if qi >= q.len() {
+            break;
+        }
+        if t[ti] == q[qi] {
+            let consecutive = last_ti.map_or(false, |l| l + 1 == ti);
+            if consecutive {
+                run += 1;
+                score += 4 + run; // growing bonus for unbroken runs
+            } else {
+                run = 0;
+                score += 1;
+            }
+            // Word-boundary bonus: match starts right after a separator
+            let at_boundary = ti == 0
+                || matches!(t[ti - 1], ' ' | ':' | '/' | '-' | '_' | '.');
+            if at_boundary {
+                score += 6;
+            }
+            last_ti = Some(ti);
+            qi += 1;
+        }
+    }
+
+    if qi == q.len() {
+        Some(score)
+    } else {
+        None
+    }
+}
+
+/// Fuzzy score with 1-typo tolerance for queries of 4+ characters.
+/// Returns None if no match even with one deletion from the query.
+fn fuzzy_score(query: &str, target: &str) -> Option<i32> {
+    // Exact subsequence match wins outright
+    if let Some(s) = subsequence_score(query, target) {
+        return Some(s);
+    }
+    // For longer queries allow dropping any one character (handles transpositions
+    // and single-key typos — e.g. "gti push" still matches "git push")
+    if query.chars().count() >= 4 {
+        let chars: Vec<char> = query.chars().collect();
+        let mut best: Option<i32> = None;
+        for skip in 0..chars.len() {
+            let shortened: String = chars
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != skip)
+                .map(|(_, c)| *c)
+                .collect();
+            if let Some(s) = subsequence_score(&shortened, target) {
+                let penalised = s - 8; // typo penalty
+                best = Some(best.map_or(penalised, |b: i32| b.max(penalised)));
+            }
+        }
+        if best.is_some() {
+            return best;
+        }
+    }
+    None
 }
 
 /// Strip punctuation (colons, dots, dashes, etc.) and collapse whitespace

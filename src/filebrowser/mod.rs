@@ -7,6 +7,8 @@ pub struct FileEntry {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    /// True when the entry is a symbolic link (is_dir already follows the target).
+    pub is_symlink: bool,
     pub depth: usize,
     pub expanded: bool,
     /// Git status: None = clean, Some('A') = added, Some('M') = modified, Some('D') = deleted, Some('?') = untracked
@@ -42,6 +44,8 @@ impl FileBrowser {
 
     pub fn refresh(&mut self) {
         self.entries.clear();
+        self.selected = 0;
+        self.scroll_offset = 0;
         if self.root.exists() {
             self.load_dir(&self.root.clone(), 0);
             self.update_ignored();
@@ -117,16 +121,23 @@ impl FileBrowser {
     }
 
     fn load_dir(&mut self, dir: &Path, depth: usize) {
-        let mut entries: Vec<(String, PathBuf, bool)> = Vec::new();
+        let mut entries: Vec<(String, PathBuf, bool, bool)> = Vec::new();
 
         if let Ok(read_dir) = std::fs::read_dir(dir) {
             for entry in read_dir.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if name.starts_with('.') {
+                    if name == ".git" {
                         continue;
                     }
-                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    entries.push((name.to_string(), entry.path(), is_dir));
+                    let ft = entry.file_type().ok();
+                    let is_symlink = ft.as_ref().map(|t| t.is_symlink()).unwrap_or(false);
+                    // Follow symlinks for is_dir: use metadata (follows symlinks)
+                    let is_dir = if is_symlink {
+                        std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false)
+                    } else {
+                        ft.map(|t| t.is_dir()).unwrap_or(false)
+                    };
+                    entries.push((name.to_string(), entry.path(), is_dir, is_symlink));
                 }
             }
         }
@@ -142,11 +153,12 @@ impl FileBrowser {
             }
         });
 
-        for (name, path, is_dir) in entries {
+        for (name, path, is_dir, is_symlink) in entries {
             self.entries.push(FileEntry {
                 name,
                 path,
                 is_dir,
+                is_symlink,
                 depth,
                 expanded: false,
                 git_status: None,
@@ -184,14 +196,20 @@ impl FileBrowser {
             let mut children = Vec::new();
 
             if let Ok(read_dir) = std::fs::read_dir(&path) {
-                let mut raw: Vec<(String, PathBuf, bool)> = Vec::new();
+                let mut raw: Vec<(String, PathBuf, bool, bool)> = Vec::new();
                 for entry in read_dir.flatten() {
                     if let Some(name) = entry.file_name().to_str() {
-                        if name.starts_with('.') {
+                        if name == ".git" {
                             continue;
                         }
-                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                        raw.push((name.to_string(), entry.path(), is_dir));
+                        let ft = entry.file_type().ok();
+                        let is_symlink = ft.as_ref().map(|t| t.is_symlink()).unwrap_or(false);
+                        let is_dir = if is_symlink {
+                            std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false)
+                        } else {
+                            ft.map(|t| t.is_dir()).unwrap_or(false)
+                        };
+                        raw.push((name.to_string(), entry.path(), is_dir, is_symlink));
                     }
                 }
                 raw.sort_by(|a, b| {
@@ -204,11 +222,12 @@ impl FileBrowser {
                     }
                 });
 
-                for (name, path, is_dir) in raw {
+                for (name, path, is_dir, is_symlink) in raw {
                     children.push(FileEntry {
                         name,
                         path,
                         is_dir,
+                        is_symlink,
                         depth: depth + 1,
                         expanded: false,
                         git_status: None,

@@ -49,9 +49,30 @@ impl DaemonClient {
         // Verify with ping
         let resp = client.send(&Request::Ping)?;
         match resp {
-            Response::Pong => Ok(client),
+            Response::Pong => {}
             _ => anyhow::bail!("unexpected ping response"),
         }
+
+        // Check protocol version — kill mismatched daemons
+        match client.send(&Request::Version) {
+            Ok(Response::ProtocolVersion { version }) => {
+                if version != protocol::PROTOCOL_VERSION {
+                    let _ = client.send(&Request::Shutdown);
+                    anyhow::bail!(
+                        "daemon protocol v{} != client v{}, restarting",
+                        version,
+                        protocol::PROTOCOL_VERSION
+                    );
+                }
+            }
+            _ => {
+                // Old daemon doesn't understand Version request — kill it
+                let _ = client.send(&Request::Shutdown);
+                anyhow::bail!("daemon too old (no version support), restarting");
+            }
+        }
+
+        Ok(client)
     }
 
     fn spawn_daemon() -> Result<()> {

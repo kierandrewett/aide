@@ -344,6 +344,10 @@ fn handle_request(req: Request, sessions: &Sessions) -> Response {
             }
         }
 
+        Request::Version => Response::ProtocolVersion {
+            version: protocol::PROTOCOL_VERSION,
+        },
+
         Request::Shutdown => {
             // Spawn a delayed exit to send response first
             std::thread::spawn(|| {
