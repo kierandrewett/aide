@@ -924,7 +924,14 @@ impl App {
         let cols = self.editor_pane_cols.max(20);
         let cmd = resolve_editor_command(&self.editor_command);
 
-        match EditorPane::spawn(&cmd, path, rows, cols, &self.config.editor_theme, &self.config.cursor_shape) {
+        match EditorPane::spawn(
+            &cmd,
+            path,
+            rows,
+            cols,
+            &self.config.editor_theme,
+            &self.config.cursor_shape,
+        ) {
             Ok(pane) => {
                 self.editor_pane = Some(pane);
                 self.viewing_file = Some(path.to_string());

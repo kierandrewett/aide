@@ -1081,9 +1081,8 @@ fn render_scrollbar(
     };
 
     let total_content = max_scroll + track_height as u16;
-    let cursor_track_pos = cursor_pos.map(|cp| {
-        ((cp as f64 / total_content as f64) * track_height as f64) as usize
-    });
+    let cursor_track_pos =
+        cursor_pos.map(|cp| ((cp as f64 / total_content as f64) * track_height as f64) as usize);
     let sel_track = sel_range.map(|(sr, er)| {
         let s = ((sr as f64 / total_content as f64) * track_height as f64) as usize;
         let e = ((er as f64 / total_content as f64) * track_height as f64) as usize;
@@ -3387,9 +3386,8 @@ fn render_horizontal_scrollbar(
     };
 
     let total_content = max_scroll as usize + track_width;
-    let cursor_track_pos = cursor_pos.map(|cp| {
-        ((cp as f64 / total_content as f64) * track_width as f64) as usize
-    });
+    let cursor_track_pos =
+        cursor_pos.map(|cp| ((cp as f64 / total_content as f64) * track_width as f64) as usize);
     let sel_track = sel_range.map(|(sc, ec)| {
         let s = ((sc as f64 / total_content as f64) * track_width as f64) as usize;
         let e = ((ec as f64 / total_content as f64) * track_width as f64) as usize;

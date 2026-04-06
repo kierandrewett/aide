@@ -1534,8 +1534,8 @@ impl Editor {
                     0
                 };
                 let total_lines = self.line_count();
-                let cursor_track_pos = ((self.cursor_row as f64 / total_lines as f64)
-                    * track_h as f64) as usize;
+                let cursor_track_pos =
+                    ((self.cursor_row as f64 / total_lines as f64) * track_h as f64) as usize;
                 let sel_track_v = self.selection.bounds().map(|(sr, _, er, _)| {
                     let s = ((sr as f64 / total_lines as f64) * track_h as f64) as usize;
                     let e = ((er as f64 / total_lines as f64) * track_h as f64) as usize;
