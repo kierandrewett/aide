@@ -184,16 +184,19 @@ fn map_key(key: KeyEvent, picker_mode: bool) -> Action {
                 ..
             } => Action::ScrollDown(0, 0),
             KeyEvent {
-                code: KeyCode::Left, ..
+                code: KeyCode::Left,
+                ..
             } => Action::ScrollLeft(0, 0),
             KeyEvent {
-                code: KeyCode::Right, ..
+                code: KeyCode::Right,
+                ..
             } => Action::ScrollRight(0, 0),
             KeyEvent {
                 code: KeyCode::Tab, ..
             } => Action::ScrollDown(0, 0),
             KeyEvent {
-                code: KeyCode::BackTab, ..
+                code: KeyCode::BackTab,
+                ..
             } => Action::ScrollUp(0, 0),
             KeyEvent {
                 code: KeyCode::Char(c),

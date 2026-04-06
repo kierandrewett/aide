@@ -9,6 +9,7 @@ use anyhow::Result;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 pub struct EditorPane {
+    #[allow(dead_code)]
     pub path: String,
     pub parser: vt100::Parser,
     output_buf: Arc<Mutex<Vec<u8>>>,
@@ -21,11 +22,19 @@ pub struct EditorPane {
     pub editor_view_h: u64,
     pub editor_scroll_col: u64,
     pub editor_max_col: u64,
+    /// Currently selected text reported by aide-editor via OSC 7734.
+    pub editor_selected_text: Option<String>,
 }
 
 impl EditorPane {
     /// Spawn `editor_command <path>` in a new local PTY of size `rows × cols`.
-    pub fn spawn(editor_command: &str, path: &str, rows: u16, cols: u16, theme: &str) -> Result<Self> {
+    pub fn spawn(
+        editor_command: &str,
+        path: &str,
+        rows: u16,
+        cols: u16,
+        theme: &str,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
             rows,
@@ -84,6 +93,7 @@ impl EditorPane {
             editor_view_h: rows as u64,
             editor_scroll_col: 0,
             editor_max_col: 0,
+            editor_selected_text: None,
         })
     }
 
@@ -122,7 +132,34 @@ impl EditorPane {
             }
         }
 
-        self.parser.process(&bytes);
+        // Parse and strip aide-editor selection reports: "\x1b]7734;<base64text>\x07"
+        let sel_marker = "\x1b]7734;";
+        let clean_bytes = if let Ok(s) = std::str::from_utf8(&bytes) {
+            if let Some(start) = s.find(sel_marker) {
+                let rest = &s[start + sel_marker.len()..];
+                if let Some(end) = rest.find('\x07') {
+                    let payload = &rest[..end];
+                    if payload.is_empty() {
+                        self.editor_selected_text = None;
+                    } else {
+                        let decoded = crate::selection::base64_decode(payload);
+                        self.editor_selected_text = String::from_utf8(decoded).ok();
+                    }
+                    // Strip the OSC sequence so vt100 never sees it
+                    let mut clean = s[..start].to_string();
+                    clean.push_str(&s[start + sel_marker.len() + end + 1..]);
+                    clean.into_bytes()
+                } else {
+                    bytes.to_vec()
+                }
+            } else {
+                bytes.to_vec()
+            }
+        } else {
+            bytes.to_vec()
+        };
+
+        self.parser.process(&clean_bytes);
         true
     }
 

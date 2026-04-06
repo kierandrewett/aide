@@ -46,6 +46,7 @@ use crate::git::{self, CommitFile, GitWorker};
 use crate::sessions::SessionManager;
 
 /// Severity level for a toast notification.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum NotificationLevel {
     Info,
@@ -55,6 +56,7 @@ pub enum NotificationLevel {
 }
 
 /// A transient toast notification shown in the bottom-right corner.
+#[allow(dead_code)]
 pub struct Notification {
     pub message: String,
     pub level: NotificationLevel,
@@ -64,6 +66,7 @@ pub struct Notification {
 }
 
 impl Notification {
+    #[allow(dead_code)]
     pub fn new(message: impl Into<String>, level: NotificationLevel) -> Self {
         Self {
             message: message.into(),
@@ -73,6 +76,7 @@ impl Notification {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_expired(&self) -> bool {
         self.created_at.elapsed() >= self.ttl
     }
@@ -110,17 +114,6 @@ pub enum GitLogRow {
     Graph,
 }
 
-#[derive(Clone, Debug)]
-pub struct TextSelection {
-    /// Start position in screen coordinates (col, row) relative to output area
-    pub start_col: u16,
-    pub start_row: u16,
-    /// Current/end position
-    pub end_col: u16,
-    pub end_row: u16,
-    /// Whether user is currently dragging
-    pub active: bool,
-}
 
 /// Callbacks for vt100 parser to capture PTY title changes.
 #[derive(Clone, Default)]
@@ -256,8 +249,10 @@ pub struct App {
     pub needs_pty_resize: bool,
     /// Set when the terminal needs a full repaint (e.g. after parser reinitialization)
     pub needs_full_repaint: bool,
-    // Text selection state (main terminal only)
-    pub selection: Option<TextSelection>,
+    // Text selection state — one per pane, only one active at a time
+    pub selection: crate::selection::SelectionState,
+    /// True when `selection` belongs to the editor pane; false = PTY output pane.
+    pub selection_in_editor: bool,
     // Background jobs (git commands etc.)
     pub bg_jobs: Vec<BackgroundJob>,
     /// Message to show briefly in status bar after a job completes
@@ -277,6 +272,7 @@ pub struct App {
     /// Use-count per palette item label — drives MRU ordering when filter is empty.
     pub palette_usage: HashMap<String, u64>,
     /// Active toast notifications (bottom-right overlay stack).
+    #[allow(dead_code)]
     pub notifications: Vec<Notification>,
     /// Double-click tracking for git log file rows: (display_row, click_time)
     pub last_git_log_click: Option<(usize, Instant)>,
@@ -355,7 +351,8 @@ impl App {
             tab_click_zones: Vec::new(),
             cached_project_files: Vec::new(),
             error_message: None,
-            selection: None,
+            selection: crate::selection::SelectionState::new(),
+            selection_in_editor: false,
             bg_jobs: Vec::new(),
             status_message: None,
             pty_parser: None,
@@ -399,8 +396,7 @@ impl App {
 
             if !dir.is_empty() {
                 // Kick off background git refresh
-                self.git_worker
-                    .request_refresh(&dir, self.git_log_limit);
+                self.git_worker.request_refresh(&dir, self.git_log_limit);
 
                 // Update file browser root
                 self.file_browser.set_root(&dir);
@@ -420,6 +416,7 @@ impl App {
     /// Poll the git worker for new data. Returns true if a new snapshot arrived.
     pub fn poll_git(&mut self) -> bool {
         if let Some(snap) = self.git_worker.take_snapshot() {
+            let branch_changed = !self.git_branch.is_empty() && snap.branch != self.git_branch;
             self.git_status = snap.status.clone();
             self.git_log = snap.log;
             self.git_branch = snap.branch;
@@ -429,6 +426,15 @@ impl App {
             self.git_file_stats = snap.file_stats;
             self.git_log_has_more = snap.log_has_more;
             self.file_browser.update_git_status(&snap.status);
+
+            // When the branch changes, fetch from remote so upstream counts stay current.
+            if branch_changed {
+                if let Some(session) = self.session_manager.active_session() {
+                    let dir = session.directory.trim_end_matches('/').to_string();
+                    self.git_worker.fetch_and_refresh(&dir, self.git_log_limit);
+                }
+            }
+
             true
         } else {
             false
@@ -698,8 +704,7 @@ impl App {
                     let subtitle_norm = normalize_for_match(&i.subtitle.to_lowercase());
                     // Score against label (primary) and subtitle (secondary)
                     let score = fuzzy_score(&filter_norm, &label_norm)
-                        .or_else(|| fuzzy_score(&filter_norm, &subtitle_norm)
-                            .map(|s| s - 5))  // subtitle matches rank a bit lower
+                        .or_else(|| fuzzy_score(&filter_norm, &subtitle_norm).map(|s| s - 5)) // subtitle matches rank a bit lower
                         .or_else(|| {
                             // Fallback: raw filter against unnormalized strings
                             if i.label.to_lowercase().contains(&filter)
@@ -782,11 +787,11 @@ impl App {
 
     /// Available editor themes in cycle order.
     pub const EDITOR_THEMES: &'static [(&'static str, &'static str)] = &[
-        ("github-dark",    "GitHub Dark"),
-        ("one-dark",       "One Dark Pro"),
-        ("dracula",        "Dracula"),
-        ("nord",           "Nord"),
-        ("monokai",        "Monokai"),
+        ("github-dark", "GitHub Dark"),
+        ("one-dark", "One Dark Pro"),
+        ("dracula", "Dracula"),
+        ("nord", "Nord"),
+        ("monokai", "Monokai"),
         ("solarized-dark", "Solarized Dark"),
     ];
 
@@ -830,7 +835,9 @@ impl App {
     /// Cycle the editor theme by `delta` (+1 = next, -1 = prev).
     pub fn cycle_theme(&mut self, delta: i32) {
         let themes = Self::EDITOR_THEMES;
-        let cur = themes.iter().position(|(id, _)| *id == self.config.editor_theme)
+        let cur = themes
+            .iter()
+            .position(|(id, _)| *id == self.config.editor_theme)
             .unwrap_or(0) as i32;
         let next = ((cur + delta).rem_euclid(themes.len() as i32)) as usize;
         self.config.editor_theme = themes[next].0.to_string();
@@ -922,7 +929,11 @@ impl App {
     /// Snapshot the current layout into `tab_layouts` under the active session ID.
     /// Also stash the EditorPane in `editor_panes` so it survives tab switching.
     pub fn save_tab_layout(&mut self) {
-        let id = match self.session_manager.sessions.get(self.session_manager.active_index) {
+        let id = match self
+            .session_manager
+            .sessions
+            .get(self.session_manager.active_index)
+        {
             Some(s) => s.session_id.clone(),
             None => return,
         };
@@ -932,24 +943,31 @@ impl App {
         } else {
             self.editor_panes.remove(&id);
         }
-        self.tab_layouts.insert(id, TabLayout {
-            viewing_file: self.viewing_file.clone(),
-            show_file_view: self.show_file_view,
-            show_file_browser: self.show_file_browser,
-            focus: self.focus,
-            scroll_offset: self.scroll_offset,
-            follow_mode: self.follow_mode,
-            git_log_scroll: self.git_log_scroll,
-            git_status_scroll: self.git_status_scroll,
-            git_log_limit: self.git_log_limit,
-            file_browser_selected: self.file_browser.selected,
-            file_browser_scroll_offset: self.file_browser.scroll_offset,
-        });
+        self.tab_layouts.insert(
+            id,
+            TabLayout {
+                viewing_file: self.viewing_file.clone(),
+                show_file_view: self.show_file_view,
+                show_file_browser: self.show_file_browser,
+                focus: self.focus,
+                scroll_offset: self.scroll_offset,
+                follow_mode: self.follow_mode,
+                git_log_scroll: self.git_log_scroll,
+                git_status_scroll: self.git_status_scroll,
+                git_log_limit: self.git_log_limit,
+                file_browser_selected: self.file_browser.selected,
+                file_browser_scroll_offset: self.file_browser.scroll_offset,
+            },
+        );
     }
 
     /// Restore layout from `tab_layouts` for the active session, or apply defaults.
     pub fn restore_tab_layout(&mut self) {
-        let id = match self.session_manager.sessions.get(self.session_manager.active_index) {
+        let id = match self
+            .session_manager
+            .sessions
+            .get(self.session_manager.active_index)
+        {
             Some(s) => s.session_id.clone(),
             None => {
                 // Welcome screen — reset to defaults
@@ -1032,7 +1050,6 @@ pub enum PaletteKind {
     /// Open the settings modal
     OpenSettings,
 }
-
 
 /// Get project files sorted by modification time (most recent first).
 /// Returns (filename, relative_path, absolute_path).
@@ -1149,8 +1166,7 @@ fn subsequence_score(query: &str, target: &str) -> Option<i32> {
                 score += 1;
             }
             // Word-boundary bonus: match starts right after a separator
-            let at_boundary = ti == 0
-                || matches!(t[ti - 1], ' ' | ':' | '/' | '-' | '_' | '.');
+            let at_boundary = ti == 0 || matches!(t[ti - 1], ' ' | ':' | '/' | '-' | '_' | '.');
             if at_boundary {
                 score += 6;
             }

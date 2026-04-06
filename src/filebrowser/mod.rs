@@ -133,7 +133,9 @@ impl FileBrowser {
                     let is_symlink = ft.as_ref().map(|t| t.is_symlink()).unwrap_or(false);
                     // Follow symlinks for is_dir: use metadata (follows symlinks)
                     let is_dir = if is_symlink {
-                        std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false)
+                        std::fs::metadata(entry.path())
+                            .map(|m| m.is_dir())
+                            .unwrap_or(false)
                     } else {
                         ft.map(|t| t.is_dir()).unwrap_or(false)
                     };
@@ -205,7 +207,9 @@ impl FileBrowser {
                         let ft = entry.file_type().ok();
                         let is_symlink = ft.as_ref().map(|t| t.is_symlink()).unwrap_or(false);
                         let is_dir = if is_symlink {
-                            std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false)
+                            std::fs::metadata(entry.path())
+                                .map(|m| m.is_dir())
+                                .unwrap_or(false)
                         } else {
                             ft.map(|t| t.is_dir()).unwrap_or(false)
                         };

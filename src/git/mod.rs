@@ -48,6 +48,22 @@ impl GitWorker {
         }
     }
 
+    /// Run `git fetch` in the background, then queue a snapshot refresh.
+    /// Used when the branch changes so upstream counts reflect the new remote state.
+    pub fn fetch_and_refresh(&self, directory: &str, log_limit: usize) {
+        let shared = self.shared.clone();
+        let dir = directory.to_string();
+        std::thread::spawn(move || {
+            let _ = Command::new("git")
+                .args(["fetch"])
+                .current_dir(&dir)
+                .output();
+            if let Ok(mut state) = shared.lock() {
+                state.pending = Some((dir, log_limit));
+            }
+        });
+    }
+
     /// Take the latest completed snapshot (if any). Returns None if no
     /// new data since last call.
     pub fn take_snapshot(&self) -> Option<GitSnapshot> {
@@ -82,6 +98,90 @@ fn worker_loop(shared: Arc<Mutex<WorkerState>>) {
     }
 }
 
+/// Walk an untracked directory recursively and collect repo-relative file paths.
+fn walk_untracked_dir(abs_dir: &std::path::Path, repo_prefix: &str, out: &mut Vec<String>) {
+    let entries = match std::fs::read_dir(abs_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut children: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    children.sort();
+    for child in children {
+        let name = match child.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let rel = format!("{}{}", repo_prefix, name);
+        if child.is_dir() {
+            walk_untracked_dir(&child, &format!("{}/", rel), out);
+        } else {
+            out.push(rel);
+        }
+    }
+}
+
+/// Post-process `git status --short --branch` output: expand lines like
+/// `?? dirname/` into one `?? dirname/file` line per file in that directory.
+fn expand_untracked_dirs(status: &str, repo_root: &str) -> String {
+    let root = std::path::Path::new(repo_root);
+    let mut result = String::new();
+    for line in status.lines() {
+        // Branch header lines start with '#' — pass through unchanged.
+        if line.starts_with('#') || line.len() < 4 {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+        let xy = &line[..2];
+        let path = &line[3..];
+        // Only expand untracked directories (ends with '/')
+        if xy == "??" && path.ends_with('/') {
+            let abs_dir = root.join(path);
+            let mut files = Vec::new();
+            walk_untracked_dir(&abs_dir, path, &mut files);
+            if files.is_empty() {
+                // Empty dir — keep the original line
+                result.push_str(line);
+                result.push('\n');
+            } else {
+                for f in files {
+                    result.push_str("?? ");
+                    result.push_str(&f);
+                    result.push('\n');
+                }
+            }
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
+}
+
+/// Sort status file lines alphabetically by path, keeping branch header lines first.
+fn sort_status_lines(status: &str) -> String {
+    let mut headers = Vec::new();
+    let mut files = Vec::new();
+    for line in status.lines() {
+        if line.starts_with('#') || line.is_empty() {
+            headers.push(line);
+        } else {
+            files.push(line);
+        }
+    }
+    files.sort_by(|a, b| {
+        let pa = if a.len() >= 3 { &a[3..] } else { "" };
+        let pb = if b.len() >= 3 { &b[3..] } else { "" };
+        pa.cmp(pb)
+    });
+    let mut out = String::new();
+    for l in headers { out.push_str(l); out.push('\n'); }
+    for l in files { out.push_str(l); out.push('\n'); }
+    out
+}
+
 /// Gather all git info in one go. Runs on background thread.
 fn gather_snapshot(directory: &str, log_limit: usize) -> GitSnapshot {
     let mut snap = GitSnapshot::default();
@@ -92,7 +192,9 @@ fn gather_snapshot(directory: &str, log_limit: usize) -> GitSnapshot {
         .current_dir(directory)
         .output()
     {
-        snap.status = String::from_utf8_lossy(&output.stdout).to_string();
+        let raw = String::from_utf8_lossy(&output.stdout).to_string();
+        let expanded = expand_untracked_dirs(&raw, directory);
+        snap.status = sort_status_lines(&expanded);
     }
 
     // branch name
@@ -111,9 +213,7 @@ fn gather_snapshot(directory: &str, log_limit: usize) -> GitSnapshot {
         .output()
     {
         if output.status.success() {
-            snap.remote_branch = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            snap.remote_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
         }
     }
 
@@ -192,32 +292,6 @@ fn gather_snapshot(directory: &str, log_limit: usize) -> GitSnapshot {
     }
 
     snap
-}
-
-/// Parse `git rev-list --left-right --count` output into (behind, ahead).
-/// Returns None if the output is not in the expected format.
-pub(crate) fn parse_upstream_counts(text: &str) -> Option<(usize, usize)> {
-    let parts: Vec<&str> = text.trim().split('\t').collect();
-    if parts.len() == 2 {
-        let behind = parts[0].parse().ok()?;
-        let ahead = parts[1].parse().ok()?;
-        Some((behind, ahead))
-    } else {
-        None
-    }
-}
-
-/// Parse a single `git diff --numstat` line into (added, deleted, filename).
-/// Returns None if the line is not in the expected format.
-pub(crate) fn parse_numstat_line(line: &str) -> Option<(usize, usize, &str)> {
-    let parts: Vec<&str> = line.split('\t').collect();
-    if parts.len() >= 3 {
-        let added = parts[0].parse().ok()?;
-        let deleted = parts[1].parse().ok()?;
-        Some((added, deleted, parts[2]))
-    } else {
-        None
-    }
 }
 
 /// A file changed in a commit.

@@ -41,9 +41,7 @@ fn nf_entry_icon(name: &str, is_dir: bool, expanded: bool) -> &'static str {
         "tsconfig.json" | "jsconfig.json" => return "\u{e628} ",
         ".gitignore" | ".gitattributes" | ".gitmodules" | ".gitconfig" => return "\u{e702} ",
         ".editorconfig" => return "\u{e615} ",
-        "license" | "licence" | "license.md" | "licence.md" | "license.txt" => {
-            return "\u{f02d} "
-        }
+        "license" | "licence" | "license.md" | "licence.md" | "license.txt" => return "\u{f02d} ",
         "readme" | "readme.md" | "readme.txt" | "readme.rst" => return "\u{f48a} ",
         "jenkinsfile" => return "\u{e767} ",
         "vagrantfile" | "gemfile" | "rakefile" | "podfile" => return "\u{e21e} ",
@@ -127,747 +125,690 @@ fn nf_entry_icon(name: &str, is_dir: bool, expanded: bool) -> &'static str {
 fn folder_color(lower: &str) -> Color {
     match lower {
         // ── Dot / hidden tool folders ─────────────────────────────────────
-        ".agents"                        => Color::Rgb(255,  82,  82), // folder-robot
-        ".claude"                        => Color::Rgb(255, 112,  67), // folder-claude
-        ".cursor"                        => Color::Rgb(224, 224, 224), // folder-cursor
-        ".gemini"                        => Color::Rgb( 66, 165, 245), // folder-gemini-ai
-        ".github"                        => Color::Rgb( 84, 110, 122), // folder-github
-        ".vscode"                        => Color::Rgb( 66, 165, 245), // folder-vscode
-        ".idea"                          => Color::Rgb( 84, 110, 122), // folder-intellij
-        ".fleet"                         => Color::Rgb( 99, 179, 237), // Fleet (no material icon)
-        ".zed"                           => Color::Rgb( 84, 174, 255), // Zed (no material icon)
-        ".cargo"                         => Color::Rgb(255, 112,  67), // folder-rust
-        ".git"                           => Color::Rgb(255, 112,  67), // folder-git
-        ".husky"                         => Color::Rgb( 96, 125, 139), // folder-husky
-        ".next"                          => Color::Rgb( 84, 110, 122), // folder-next
-        ".nuxt"                          => Color::Rgb( 84, 110, 122), // folder-nuxt
-        ".svelte-kit" | ".sveltekit"     => Color::Rgb(255,  87,  34), // folder-svelte
-        ".turbo"                         => Color::Rgb( 84, 110, 122), // folder-turborepo
-        ".nx"                            => Color::Rgb( 22, 101, 216), // Nx (no material icon)
-        ".yarn"                          => Color::Rgb(  2, 136, 209), // folder-yarn
-        ".pnpm"                          => Color::Rgb(245, 165,  36), // pnpm (no material icon)
-        ".npm"                           => Color::Rgb(203,  56,  55), // npm (no material icon)
-        ".docker"                        => Color::Rgb(  3, 155, 229), // folder-docker
-        ".terraform"                     => Color::Rgb( 92, 107, 192), // folder-terraform
-        ".gradle"                        => Color::Rgb(  0, 151, 167), // folder-gradle
-        ".mvn"                           => Color::Rgb(198,  40,  40), // Maven (no material icon)
-        ".pytest_cache" | "__pycache__" | ".mypy_cache" | ".tox" | ".ruff_cache"
-                                         => Color::Rgb( 66, 165, 245), // folder-python
-        "venv" | ".venv" | "virtualenv" | ".virtualenv" | ".venv311" | ".venv312"
-                                         => Color::Rgb(102, 187, 106), // folder-environment
-        "node_modules"                   => Color::Rgb(139, 195,  74), // folder-node
-        ".env" | ".envs"                 => Color::Rgb(102, 187, 106), // folder-environment
+        ".agents" => Color::Rgb(255, 82, 82),   // folder-robot
+        ".claude" => Color::Rgb(255, 112, 67),  // folder-claude
+        ".cursor" => Color::Rgb(224, 224, 224), // folder-cursor
+        ".gemini" => Color::Rgb(66, 165, 245),  // folder-gemini-ai
+        ".github" => Color::Rgb(84, 110, 122),  // folder-github
+        ".vscode" => Color::Rgb(66, 165, 245),  // folder-vscode
+        ".idea" => Color::Rgb(84, 110, 122),    // folder-intellij
+        ".fleet" => Color::Rgb(99, 179, 237),   // Fleet (no material icon)
+        ".zed" => Color::Rgb(84, 174, 255),     // Zed (no material icon)
+        ".cargo" => Color::Rgb(255, 112, 67),   // folder-rust
+        ".git" => Color::Rgb(255, 112, 67),     // folder-git
+        ".husky" => Color::Rgb(96, 125, 139),   // folder-husky
+        ".next" => Color::Rgb(84, 110, 122),    // folder-next
+        ".nuxt" => Color::Rgb(84, 110, 122),    // folder-nuxt
+        ".svelte-kit" | ".sveltekit" => Color::Rgb(255, 87, 34), // folder-svelte
+        ".turbo" => Color::Rgb(84, 110, 122),   // folder-turborepo
+        ".nx" => Color::Rgb(22, 101, 216),      // Nx (no material icon)
+        ".yarn" => Color::Rgb(2, 136, 209),     // folder-yarn
+        ".pnpm" => Color::Rgb(245, 165, 36),    // pnpm (no material icon)
+        ".npm" => Color::Rgb(203, 56, 55),      // npm (no material icon)
+        ".docker" => Color::Rgb(3, 155, 229),   // folder-docker
+        ".terraform" => Color::Rgb(92, 107, 192), // folder-terraform
+        ".gradle" => Color::Rgb(0, 151, 167),   // folder-gradle
+        ".mvn" => Color::Rgb(198, 40, 40),      // Maven (no material icon)
+        ".pytest_cache" | "__pycache__" | ".mypy_cache" | ".tox" | ".ruff_cache" => {
+            Color::Rgb(66, 165, 245)
+        } // folder-python
+        "venv" | ".venv" | "virtualenv" | ".virtualenv" | ".venv311" | ".venv312" => {
+            Color::Rgb(102, 187, 106)
+        } // folder-environment
+        "node_modules" => Color::Rgb(139, 195, 74), // folder-node
+        ".env" | ".envs" => Color::Rgb(102, 187, 106), // folder-environment
 
         // ── folder-rust ───────────────────────────────────────────────────
-        "rust"                           => Color::Rgb(255, 112,  67),
+        "rust" => Color::Rgb(255, 112, 67),
         // ── folder-robot ──────────────────────────────────────────────────
-        "bot" | "bots" | "robot" | "robots" | "agent" | "agents"
-                                         => Color::Rgb(255,  82,  82),
+        "bot" | "bots" | "robot" | "robots" | "agent" | "agents" => Color::Rgb(255, 82, 82),
         // ── folder-src ────────────────────────────────────────────────────
-        "src" | "srcs" | "source" | "sources" | "code"
-                                         => Color::Rgb( 76, 175,  80),
+        "src" | "srcs" | "source" | "sources" | "code" => Color::Rgb(76, 175, 80),
         // ── folder-dist ───────────────────────────────────────────────────
-        "dist" | "out" | "output" | "outputs" | "build" | "builds"
-        | "release" | "bin" | "distribution" | "built" | "compiled"
-                                         => Color::Rgb(229, 115, 115),
+        "dist" | "out" | "output" | "outputs" | "build" | "builds" | "release" | "bin"
+        | "distribution" | "built" | "compiled" => Color::Rgb(229, 115, 115),
         // ── folder-css ────────────────────────────────────────────────────
-        "css" | "stylesheet" | "stylesheets" | "style" | "styles"
-                                         => Color::Rgb(209, 196, 233),
+        "css" | "stylesheet" | "stylesheets" | "style" | "styles" => Color::Rgb(209, 196, 233),
         // ── folder-sass ───────────────────────────────────────────────────
-        "sass" | "scss"                  => Color::Rgb(240,  98, 146),
+        "sass" | "scss" => Color::Rgb(240, 98, 146),
         // ── folder-television ─────────────────────────────────────────────
-        "tv" | "television"              => Color::Rgb(251, 192,  45),
+        "tv" | "television" => Color::Rgb(251, 192, 45),
         // ── folder-desktop ────────────────────────────────────────────────
-        "desktop" | "display"            => Color::Rgb(  3, 155, 229),
+        "desktop" | "display" => Color::Rgb(3, 155, 229),
         // ── folder-console ────────────────────────────────────────────────
-        "console" | "xbox" | "ps4" | "ps5" | "switch" | "game" | "games"
-                                         => Color::Rgb(139, 195,  74),
+        "console" | "xbox" | "ps4" | "ps5" | "switch" | "game" | "games" => {
+            Color::Rgb(139, 195, 74)
+        }
         // ── folder-images ─────────────────────────────────────────────────
-        "images" | "image" | "imgs" | "img" | "icons" | "icon" | "icos" | "ico"
-        | "figures" | "figure" | "figs" | "fig" | "screenshot" | "screenshots"
-        | "screengrab" | "screengrabs" | "pic" | "pics" | "picture" | "pictures"
-        | "photo" | "photos" | "photograph" | "photographs" | "texture" | "textures"
-                                         => Color::Rgb(  0, 150, 136),
+        "images" | "image" | "imgs" | "img" | "icons" | "icon" | "icos" | "ico" | "figures"
+        | "figure" | "figs" | "fig" | "screenshot" | "screenshots" | "screengrab"
+        | "screengrabs" | "pic" | "pics" | "picture" | "pictures" | "photo" | "photos"
+        | "photograph" | "photographs" | "texture" | "textures" => Color::Rgb(0, 150, 136),
         // ── folder-scripts ────────────────────────────────────────────────
-        "script" | "scripts" | "scripting"
-                                         => Color::Rgb( 84, 110, 122),
+        "script" | "scripts" | "scripting" => Color::Rgb(84, 110, 122),
         // ── folder-node ───────────────────────────────────────────────────
-        "node" | "nodejs"                => Color::Rgb(139, 195,  74),
+        "node" | "nodejs" => Color::Rgb(139, 195, 74),
         // ── folder-javascript ─────────────────────────────────────────────
-        "js" | "javascript" | "javascripts" | "cjs" | "mjs"
-                                         => Color::Rgb(255, 202,  40),
+        "js" | "javascript" | "javascripts" | "cjs" | "mjs" => Color::Rgb(255, 202, 40),
         // ── folder-json ───────────────────────────────────────────────────
-        "json" | "jsons" | "jsonc" | "jsonl"
-                                         => Color::Rgb(249, 168,  37),
+        "json" | "jsons" | "jsonc" | "jsonl" => Color::Rgb(249, 168, 37),
         // ── folder-font ───────────────────────────────────────────────────
-        "font" | "fonts" | "typeface" | "typefaces"
-                                         => Color::Rgb(255,  82,  82),
+        "font" | "fonts" | "typeface" | "typefaces" => Color::Rgb(255, 82, 82),
         // ── folder-bower ──────────────────────────────────────────────────
-        "bower_components"               => Color::Rgb(141, 110,  99),
+        "bower_components" => Color::Rgb(141, 110, 99),
         // ── folder-test ───────────────────────────────────────────────────
-        "test" | "tests" | "testing" | "snapshots" | "spec" | "specs"
-        | "testfiles" | "__tests__"      => Color::Rgb(  0, 191, 165),
+        "test" | "tests" | "testing" | "snapshots" | "spec" | "specs" | "testfiles"
+        | "__tests__" => Color::Rgb(0, 191, 165),
         // ── folder-directive ──────────────────────────────────────────────
-        "directive" | "directives"       => Color::Rgb(244,  67,  54),
+        "directive" | "directives" => Color::Rgb(244, 67, 54),
         // ── folder-jinja ──────────────────────────────────────────────────
-        "jinja" | "jinja2" | "j2"        => Color::Rgb(224, 224, 224),
+        "jinja" | "jinja2" | "j2" => Color::Rgb(224, 224, 224),
         // ── folder-markdown ───────────────────────────────────────────────
-        "markdown" | "md"                => Color::Rgb(  2, 119, 189),
+        "markdown" | "md" => Color::Rgb(2, 119, 189),
         // ── folder-pdm ────────────────────────────────────────────────────
-        "pdm-plugins" | "pdm-build"      => Color::Rgb(149, 117, 205),
+        "pdm-plugins" | "pdm-build" => Color::Rgb(149, 117, 205),
         // ── folder-php ────────────────────────────────────────────────────
-        "php"                            => Color::Rgb( 30, 136, 229),
+        "php" => Color::Rgb(30, 136, 229),
         // ── folder-phpmailer ──────────────────────────────────────────────
-        "phpmailer"                      => Color::Rgb( 97,  97,  97),
+        "phpmailer" => Color::Rgb(97, 97, 97),
         // ── folder-sublime ────────────────────────────────────────────────
-        "sublime"                        => Color::Rgb( 97,  97,  97),
+        "sublime" => Color::Rgb(97, 97, 97),
         // ── folder-docs ───────────────────────────────────────────────────
-        "doc" | "docs" | "document" | "documents" | "documentation"
-        | "post" | "posts" | "article" | "articles" | "wiki" | "news"
-        | "blog" | "knowledge" | "diary" | "note" | "notes"
-                                         => Color::Rgb(  2, 119, 189),
+        "doc" | "docs" | "document" | "documents" | "documentation" | "post" | "posts"
+        | "article" | "articles" | "wiki" | "news" | "blog" | "knowledge" | "diary" | "note"
+        | "notes" => Color::Rgb(2, 119, 189),
         // ── folder-gh-workflows ───────────────────────────────────────────
-        "github/workflows"               => Color::Rgb( 84, 110, 122),
+        "github/workflows" => Color::Rgb(84, 110, 122),
         // ── folder-git ────────────────────────────────────────────────────
-        "git" | "patches" | "githooks" | "submodules"
-                                         => Color::Rgb(255, 112,  67),
+        "git" | "patches" | "githooks" | "submodules" => Color::Rgb(255, 112, 67),
         // ── folder-github ─────────────────────────────────────────────────
-        "github"                         => Color::Rgb( 84, 110, 122),
+        "github" => Color::Rgb(84, 110, 122),
         // ── folder-gitea ──────────────────────────────────────────────────
-        "gitea"                          => Color::Rgb(104, 159,  56),
+        "gitea" => Color::Rgb(104, 159, 56),
         // ── folder-gitlab ─────────────────────────────────────────────────
-        "gitlab"                         => Color::Rgb(117, 117, 117),
+        "gitlab" => Color::Rgb(117, 117, 117),
         // ── folder-forgejo ────────────────────────────────────────────────
-        "forgejo"                        => Color::Rgb(117, 117, 117),
+        "forgejo" => Color::Rgb(117, 117, 117),
         // ── folder-vscode ─────────────────────────────────────────────────
-        "vscode" | "vscode-test"         => Color::Rgb( 66, 165, 245),
+        "vscode" | "vscode-test" => Color::Rgb(66, 165, 245),
         // ── folder-views ──────────────────────────────────────────────────
-        "view" | "views" | "screen" | "screens" | "page" | "pages"
-        | "public_html" | "html"         => Color::Rgb(255, 112,  67),
+        "view" | "views" | "screen" | "screens" | "page" | "pages" | "public_html" | "html" => {
+            Color::Rgb(255, 112, 67)
+        }
         // ── folder-vue ────────────────────────────────────────────────────
-        "vue"                            => Color::Rgb(  0, 150, 136),
+        "vue" => Color::Rgb(0, 150, 136),
         // ── folder-vuepress ───────────────────────────────────────────────
-        "vuepress"                       => Color::Rgb( 65, 184, 131),
+        "vuepress" => Color::Rgb(65, 184, 131),
         // ── folder-expo ───────────────────────────────────────────────────
-        "expo" | "expo-shared"           => Color::Rgb( 25, 118, 210),
+        "expo" | "expo-shared" => Color::Rgb(25, 118, 210),
         // ── folder-config ─────────────────────────────────────────────────
-        "cfg" | "cfgs" | "conf" | "confs" | "config" | "configs"
-        | "configuration" | "configurations" | "setting" | "settings"
-        | "meta-inf" | "option" | "options" | "pref" | "prefs"
-        | "preference" | "preferences" | "props" | "properties"
-                                         => Color::Rgb(  0, 172, 193),
+        "cfg" | "cfgs" | "conf" | "confs" | "config" | "configs" | "configuration"
+        | "configurations" | "setting" | "settings" | "meta-inf" | "option" | "options"
+        | "pref" | "prefs" | "preference" | "preferences" | "props" | "properties" => {
+            Color::Rgb(0, 172, 193)
+        }
         // ── folder-i18n ───────────────────────────────────────────────────
-        "i18n" | "internationalization" | "lang" | "langs" | "language"
-        | "languages" | "locale" | "locales" | "l10n" | "localization"
-        | "translation" | "translate" | "translations" | "tx"
-                                         => Color::Rgb( 92, 107, 192),
+        "i18n"
+        | "internationalization"
+        | "lang"
+        | "langs"
+        | "language"
+        | "languages"
+        | "locale"
+        | "locales"
+        | "l10n"
+        | "localization"
+        | "translation"
+        | "translate"
+        | "translations"
+        | "tx" => Color::Rgb(92, 107, 192),
         // ── folder-components ─────────────────────────────────────────────
-        "components" | "widget" | "widgets" | "fragments"
-                                         => Color::Rgb(192, 202,  51),
+        "components" | "widget" | "widgets" | "fragments" => Color::Rgb(192, 202, 51),
         // ── folder-verdaccio ──────────────────────────────────────────────
-        "verdaccio"                      => Color::Rgb(  0, 137, 123),
+        "verdaccio" => Color::Rgb(0, 137, 123),
         // ── folder-aurelia ────────────────────────────────────────────────
-        "aurelia_project"                => Color::Rgb(240,  98, 146),
+        "aurelia_project" => Color::Rgb(240, 98, 146),
         // ── folder-resource ───────────────────────────────────────────────
-        "resource" | "resources" | "res" | "asset" | "assets"
-        | "static" | "report" | "reports"
-                                         => Color::Rgb(251, 192,  45),
+        "resource" | "resources" | "res" | "asset" | "assets" | "static" | "report" | "reports" => {
+            Color::Rgb(251, 192, 45)
+        }
         // ── folder-lib ────────────────────────────────────────────────────
-        "lib" | "libs" | "library" | "libraries" | "vendor" | "vendors"
-        | "third-party" | "lib64"        => Color::Rgb(192, 202,  51),
+        "lib" | "libs" | "library" | "libraries" | "vendor" | "vendors" | "third-party"
+        | "lib64" => Color::Rgb(192, 202, 51),
         // ── folder-theme ──────────────────────────────────────────────────
-        "themes" | "theme" | "color" | "colors" | "colour" | "colours"
-        | "design" | "designs" | "palette" | "palettes"
-                                         => Color::Rgb( 30, 136, 229),
+        "themes" | "theme" | "color" | "colors" | "colour" | "colours" | "design" | "designs"
+        | "palette" | "palettes" => Color::Rgb(30, 136, 229),
         // ── folder-webpack ────────────────────────────────────────────────
-        "webpack"                        => Color::Rgb(  3, 169, 244),
+        "webpack" => Color::Rgb(3, 169, 244),
         // ── folder-global ─────────────────────────────────────────────────
-        "global"                         => Color::Rgb( 92, 107, 192),
+        "global" => Color::Rgb(92, 107, 192),
         // ── folder-public ─────────────────────────────────────────────────
-        "public" | "www" | "wwwroot" | "web" | "website" | "websites"
-        | "site" | "browser" | "browsers" | "proxy"
-                                         => Color::Rgb(  3, 155, 229),
+        "public" | "www" | "wwwroot" | "web" | "website" | "websites" | "site" | "browser"
+        | "browsers" | "proxy" => Color::Rgb(3, 155, 229),
         // ── folder-include ────────────────────────────────────────────────
-        "inc" | "include" | "includes" | "partial" | "partials" | "inc64"
-                                         => Color::Rgb(  3, 155, 229),
+        "inc" | "include" | "includes" | "partial" | "partials" | "inc64" => {
+            Color::Rgb(3, 155, 229)
+        }
         // ── folder-docker ─────────────────────────────────────────────────
-        "docker" | "dockerfiles" | "dockerhub"
-                                         => Color::Rgb(  3, 155, 229),
+        "docker" | "dockerfiles" | "dockerhub" => Color::Rgb(3, 155, 229),
         // ── folder-nginx ──────────────────────────────────────────────────
-        "nginx"                          => Color::Rgb( 56, 142,  60),
+        "nginx" => Color::Rgb(56, 142, 60),
         // ── folder-database ───────────────────────────────────────────────
-        "db" | "data" | "database" | "databases" | "sql"
-                                         => Color::Rgb(255, 202,  40),
+        "db" | "data" | "database" | "databases" | "sql" => Color::Rgb(255, 202, 40),
         // ── folder-migrations ─────────────────────────────────────────────
-        "migrations" | "migration"       => Color::Rgb(236,  64, 122),
+        "migrations" | "migration" => Color::Rgb(236, 64, 122),
         // ── folder-log ────────────────────────────────────────────────────
-        "log" | "logs" | "logging"       => Color::Rgb(175, 180,  43),
+        "log" | "logs" | "logging" => Color::Rgb(175, 180, 43),
         // ── folder-target ─────────────────────────────────────────────────
-        "target"                         => Color::Rgb( 84, 110, 122),
+        "target" => Color::Rgb(84, 110, 122),
         // ── folder-temp ───────────────────────────────────────────────────
-        "temp" | "tmp" | "cached" | "cache" | "caches" | ".cache" | ".tmp"
-                                         => Color::Rgb(  0, 151, 167),
+        "temp" | "tmp" | "cached" | "cache" | "caches" | ".cache" | ".tmp" => {
+            Color::Rgb(0, 151, 167)
+        }
         // ── folder-aws ────────────────────────────────────────────────────
-        "aws" | "azure" | "gcp"          => Color::Rgb(255, 179,   0),
+        "aws" | "azure" | "gcp" => Color::Rgb(255, 179, 0),
         // ── folder-audio ──────────────────────────────────────────────────
-        "aud" | "auds" | "audio" | "audios" | "music" | "song" | "songs"
-        | "sound" | "sounds" | "voice" | "voices" | "recordings"
-        | "playlist" | "playlists"       => Color::Rgb(239,  83,  80),
+        "aud" | "auds" | "audio" | "audios" | "music" | "song" | "songs" | "sound" | "sounds"
+        | "voice" | "voices" | "recordings" | "playlist" | "playlists" => Color::Rgb(239, 83, 80),
         // ── folder-video ──────────────────────────────────────────────────
-        "vid" | "vids" | "video" | "videos" | "movie" | "movies" | "media"
-                                         => Color::Rgb(255, 152,   0),
+        "vid" | "vids" | "video" | "videos" | "movie" | "movies" | "media" => {
+            Color::Rgb(255, 152, 0)
+        }
         // ── folder-kubernetes ─────────────────────────────────────────────
-        "kubernetes" | "k8s"             => Color::Rgb( 68, 138, 255),
+        "kubernetes" | "k8s" => Color::Rgb(68, 138, 255),
         // ── folder-import ─────────────────────────────────────────────────
-        "import" | "imports" | "imported"
-                                         => Color::Rgb(175, 180,  43),
+        "import" | "imports" | "imported" => Color::Rgb(175, 180, 43),
         // ── folder-export ─────────────────────────────────────────────────
-        "export" | "exports" | "exported"
-                                         => Color::Rgb(255, 138, 101),
+        "export" | "exports" | "exported" => Color::Rgb(255, 138, 101),
         // ── folder-wakatime ───────────────────────────────────────────────
-        "wakatime"                       => Color::Rgb( 69,  90, 100),
+        "wakatime" => Color::Rgb(69, 90, 100),
         // ── folder-circleci ───────────────────────────────────────────────
-        "circleci"                       => Color::Rgb( 84, 110, 122),
+        "circleci" => Color::Rgb(84, 110, 122),
         // ── folder-wordpress ──────────────────────────────────────────────
-        "wordpress-org" | "wp-content"   => Color::Rgb(  2, 119, 189),
+        "wordpress-org" | "wp-content" => Color::Rgb(2, 119, 189),
         // ── folder-gradle ─────────────────────────────────────────────────
-        "gradle"                         => Color::Rgb(  0, 151, 167),
+        "gradle" => Color::Rgb(0, 151, 167),
         // ── folder-coverage ───────────────────────────────────────────────
-        "coverage" | ".coverage" | ".nyc_output" | "nyc-output" | "nyc_output"
-        | "e2e" | "it" | "integration-test" | "integration-tests"
-                                         => Color::Rgb( 38, 166, 154),
+        "coverage" | ".coverage" | ".nyc_output" | "nyc-output" | "nyc_output" | "e2e" | "it"
+        | "integration-test" | "integration-tests" => Color::Rgb(38, 166, 154),
         // ── folder-class ──────────────────────────────────────────────────
-        "class" | "classes" | "model" | "models" | "schemas" | "schema"
-                                         => Color::Rgb(239,  83,  80),
+        "class" | "classes" | "model" | "models" | "schemas" | "schema" => Color::Rgb(239, 83, 80),
         // ── folder-other ──────────────────────────────────────────────────
-        "other" | "others" | "misc" | "miscellaneous" | "extra" | "extras" | "etc"
-                                         => Color::Rgb(255, 112,  67),
+        "other" | "others" | "misc" | "miscellaneous" | "extra" | "extras" | "etc" => {
+            Color::Rgb(255, 112, 67)
+        }
         // ── folder-lua ────────────────────────────────────────────────────
-        "lua"                            => Color::Rgb( 66, 165, 245),
+        "lua" => Color::Rgb(66, 165, 245),
         // ── folder-turborepo ──────────────────────────────────────────────
-        "turbo"                          => Color::Rgb( 84, 110, 122),
+        "turbo" => Color::Rgb(84, 110, 122),
         // ── folder-typescript ─────────────────────────────────────────────
-        "typescript" | "ts" | "typings" | "@types" | "types" | "cts" | "mts"
-                                         => Color::Rgb(  2, 136, 209),
+        "typescript" | "ts" | "typings" | "@types" | "types" | "cts" | "mts" => {
+            Color::Rgb(2, 136, 209)
+        }
         // ── folder-graphql ────────────────────────────────────────────────
-        "graphql" | "gql"                => Color::Rgb(236,  64, 122),
+        "graphql" | "gql" => Color::Rgb(236, 64, 122),
         // ── folder-routes ─────────────────────────────────────────────────
-        "routes" | "router" | "routers" | "navigation" | "navigations" | "routing"
-                                         => Color::Rgb( 67, 160,  71),
+        "routes" | "router" | "routers" | "navigation" | "navigations" | "routing" => {
+            Color::Rgb(67, 160, 71)
+        }
         // ── folder-ci ─────────────────────────────────────────────────────
-        "ci"                             => Color::Rgb(  2, 136, 209),
+        "ci" => Color::Rgb(2, 136, 209),
         // ── folder-eslint ─────────────────────────────────────────────────
-        "eslint" | "eslint-plugin" | "eslint-plugins" | "eslint-config" | "eslint-configs"
-                                         => Color::Rgb( 92, 107, 192),
+        "eslint" | "eslint-plugin" | "eslint-plugins" | "eslint-config" | "eslint-configs" => {
+            Color::Rgb(92, 107, 192)
+        }
         // ── folder-benchmark ──────────────────────────────────────────────
-        "benchmark" | "benchmarks" | "bench" | "benches" | "performance" | "perf"
-        | "profiling" | "measure" | "measures" | "measurement"
-                                         => Color::Rgb( 30, 136, 229),
+        "benchmark" | "benchmarks" | "bench" | "benches" | "performance" | "perf" | "profiling"
+        | "measure" | "measures" | "measurement" => Color::Rgb(30, 136, 229),
         // ── folder-messages ───────────────────────────────────────────────
         "messages" | "messaging" | "forum" | "chat" | "chats" | "conversation"
-        | "conversations" | "dialog" | "dialogs"
-                                         => Color::Rgb(255, 152,   0),
+        | "conversations" | "dialog" | "dialogs" => Color::Rgb(255, 152, 0),
         // ── folder-less ───────────────────────────────────────────────────
-        "less"                           => Color::Rgb(  2, 119, 189),
+        "less" => Color::Rgb(2, 119, 189),
         // ── folder-gulp ───────────────────────────────────────────────────
-        "gulp" | "gulp-tasks" | "gulpfiles"
-                                         => Color::Rgb(255,  82,  82),
+        "gulp" | "gulp-tasks" | "gulpfiles" => Color::Rgb(255, 82, 82),
         // ── folder-python ─────────────────────────────────────────────────
-        "python" | "pycache" | "pytest_cache"
-                                         => Color::Rgb( 66, 165, 245),
+        "python" | "pycache" | "pytest_cache" => Color::Rgb(66, 165, 245),
         // ── folder-r ──────────────────────────────────────────────────────
-        "r"                              => Color::Rgb( 25, 118, 210),
+        "r" => Color::Rgb(25, 118, 210),
         // ── folder-sandbox ────────────────────────────────────────────────
-        "sandbox" | "sandboxes" | "playground" | "playgrounds"
-                                         => Color::Rgb( 30, 136, 229),
+        "sandbox" | "sandboxes" | "playground" | "playgrounds" => Color::Rgb(30, 136, 229),
         // ── folder-scons ──────────────────────────────────────────────────
-        "scons" | "sconf_temp" | "scons_cache"
-                                         => Color::Rgb(239,  83,  80),
+        "scons" | "sconf_temp" | "scons_cache" => Color::Rgb(239, 83, 80),
         // ── folder-mojo ───────────────────────────────────────────────────
-        "mojo"                           => Color::Rgb(255, 112,  67),
+        "mojo" => Color::Rgb(255, 112, 67),
         // ── folder-moon ───────────────────────────────────────────────────
-        "moon"                           => Color::Rgb(126,  87, 194),
+        "moon" => Color::Rgb(126, 87, 194),
         // ── folder-debug ──────────────────────────────────────────────────
-        "debug" | "debugger" | "debugging"
-                                         => Color::Rgb(249, 168,  37),
+        "debug" | "debugger" | "debugging" => Color::Rgb(249, 168, 37),
         // ── folder-fastlane ───────────────────────────────────────────────
-        "fastlane"                       => Color::Rgb( 30, 136, 229),
+        "fastlane" => Color::Rgb(30, 136, 229),
         // ── folder-plugin ─────────────────────────────────────────────────
-        "plugin" | "plugins" | "mod" | "mods" | "modding" | "extension"
-        | "extensions" | "addon" | "addons" | "addin" | "addins"
-        | "module" | "modules"           => Color::Rgb(  2, 136, 209),
+        "plugin" | "plugins" | "mod" | "mods" | "modding" | "extension" | "extensions"
+        | "addon" | "addons" | "addin" | "addins" | "module" | "modules" => Color::Rgb(2, 136, 209),
         // ── folder-middleware ─────────────────────────────────────────────
-        "middleware" | "middlewares"     => Color::Rgb( 92, 107, 192),
+        "middleware" | "middlewares" => Color::Rgb(92, 107, 192),
         // ── folder-controller ─────────────────────────────────────────────
-        "controller" | "controllers" | "controls" | "service" | "services"
-        | "provider" | "providers" | "handler" | "handlers"
-                                         => Color::Rgb(255, 193,   7),
+        "controller" | "controllers" | "controls" | "service" | "services" | "provider"
+        | "providers" | "handler" | "handlers" => Color::Rgb(255, 193, 7),
         // ── folder-ansible ────────────────────────────────────────────────
-        "ansible"                        => Color::Rgb( 97,  97,  97),
+        "ansible" => Color::Rgb(97, 97, 97),
         // ── folder-server ─────────────────────────────────────────────────
-        "server" | "servers" | "backend" | "backends" | "inventory"
-        | "inventories" | "infrastructure" | "infra"
-                                         => Color::Rgb(251, 192,  45),
+        "server" | "servers" | "backend" | "backends" | "inventory" | "inventories"
+        | "infrastructure" | "infra" => Color::Rgb(251, 192, 45),
         // ── folder-client ─────────────────────────────────────────────────
-        "client" | "clients" | "frontend" | "frontends" | "pwa" | "spa"
-                                         => Color::Rgb(  3, 155, 229),
+        "client" | "clients" | "frontend" | "frontends" | "pwa" | "spa" => Color::Rgb(3, 155, 229),
         // ── folder-tasks ──────────────────────────────────────────────────
-        "tasks" | "tickets"              => Color::Rgb( 92, 107, 192),
+        "tasks" | "tickets" => Color::Rgb(92, 107, 192),
         // ── folder-android ────────────────────────────────────────────────
-        "android"                        => Color::Rgb(139, 195,  74),
+        "android" => Color::Rgb(139, 195, 74),
         // ── folder-ios ────────────────────────────────────────────────────
-        "ios"                            => Color::Rgb(120, 144, 156),
+        "ios" => Color::Rgb(120, 144, 156),
         // ── folder-ui ─────────────────────────────────────────────────────
-        "presentation" | "gui" | "ui" | "ux"
-                                         => Color::Rgb(171,  71, 188),
+        "presentation" | "gui" | "ui" | "ux" => Color::Rgb(171, 71, 188),
         // ── folder-upload ─────────────────────────────────────────────────
-        "uploads" | "upload"             => Color::Rgb(255, 112,  67),
+        "uploads" | "upload" => Color::Rgb(255, 112, 67),
         // ── folder-download ───────────────────────────────────────────────
-        "downloads" | "download" | "downloader" | "downloaders"
-                                         => Color::Rgb( 76, 175,  80),
+        "downloads" | "download" | "downloader" | "downloaders" => Color::Rgb(76, 175, 80),
         // ── folder-tools ──────────────────────────────────────────────────
-        "tools" | "toolkit" | "toolkits" | "toolbox" | "toolboxes"
-        | "tooling" | "devtools" | "kit" | "kits"
-                                         => Color::Rgb( 30, 136, 229),
+        "tools" | "toolkit" | "toolkits" | "toolbox" | "toolboxes" | "tooling" | "devtools"
+        | "kit" | "kits" => Color::Rgb(30, 136, 229),
         // ── folder-helper ─────────────────────────────────────────────────
-        "helpers" | "helper"             => Color::Rgb(175, 180,  43),
+        "helpers" | "helper" => Color::Rgb(175, 180, 43),
         // ── folder-serverless ─────────────────────────────────────────────
-        "serverless"                     => Color::Rgb(239,  83,  80),
+        "serverless" => Color::Rgb(239, 83, 80),
         // ── folder-api ────────────────────────────────────────────────────
-        "api" | "apis" | "restapi"       => Color::Rgb(251, 192,  45),
+        "api" | "apis" | "restapi" => Color::Rgb(251, 192, 45),
         // ── folder-app ────────────────────────────────────────────────────
-        "app" | "apps" | "application" | "applications"
-                                         => Color::Rgb(239,  83,  80),
+        "app" | "apps" | "application" | "applications" => Color::Rgb(239, 83, 80),
         // ── folder-apollo ─────────────────────────────────────────────────
-        "apollo" | "apollo-client" | "apollo-cache" | "apollo-config"
-                                         => Color::Rgb(126,  87, 194),
+        "apollo" | "apollo-client" | "apollo-cache" | "apollo-config" => Color::Rgb(126, 87, 194),
         // ── folder-archive ────────────────────────────────────────────────
-        "arc" | "arcs" | "archive" | "archives" | "archival"
-                                         => Color::Rgb(255, 167,  38),
+        "arc" | "arcs" | "archive" | "archives" | "archival" => Color::Rgb(255, 167, 38),
         // ── folder-backup ─────────────────────────────────────────────────
-        "bkp" | "bkps" | "bak" | "baks" | "backup" | "backups"
-        | "back-up" | "back-ups" | "history" | "histories"
-                                         => Color::Rgb(141, 110,  99),
+        "bkp" | "bkps" | "bak" | "baks" | "backup" | "backups" | "back-up" | "back-ups"
+        | "history" | "histories" => Color::Rgb(141, 110, 99),
         // ── folder-batch ──────────────────────────────────────────────────
-        "batch" | "batchs" | "batches"   => Color::Rgb( 97,  97,  97),
+        "batch" | "batchs" | "batches" => Color::Rgb(97, 97, 97),
         // ── folder-buildkite ──────────────────────────────────────────────
-        "buildkite"                      => Color::Rgb( 76, 175,  80),
+        "buildkite" => Color::Rgb(76, 175, 80),
         // ── folder-cluster ────────────────────────────────────────────────
-        "cluster" | "clusters"           => Color::Rgb( 38, 166, 154),
+        "cluster" | "clusters" => Color::Rgb(38, 166, 154),
         // ── folder-command ────────────────────────────────────────────────
-        "command" | "commands" | "commandline" | "cmd" | "cli" | "clis"
-                                         => Color::Rgb(  3, 169, 244),
+        "command" | "commands" | "commandline" | "cmd" | "cli" | "clis" => Color::Rgb(3, 169, 244),
         // ── folder-constant ───────────────────────────────────────────────
-        "constant" | "constants" | "const" | "consts"
-                                         => Color::Rgb( 96, 125, 139),
+        "constant" | "constants" | "const" | "consts" => Color::Rgb(96, 125, 139),
         // ── folder-container ──────────────────────────────────────────────
-        "container" | "containers" | "devcontainer"
-                                         => Color::Rgb(  2, 136, 209),
+        "container" | "containers" | "devcontainer" => Color::Rgb(2, 136, 209),
         // ── folder-content ────────────────────────────────────────────────
-        "content" | "contents"           => Color::Rgb(  0, 188, 212),
+        "content" | "contents" => Color::Rgb(0, 188, 212),
         // ── folder-context ────────────────────────────────────────────────
-        "context" | "contexts"           => Color::Rgb(  0, 137, 123),
+        "context" | "contexts" => Color::Rgb(0, 137, 123),
         // ── folder-core ───────────────────────────────────────────────────
-        "core"                           => Color::Rgb( 25, 118, 210),
+        "core" => Color::Rgb(25, 118, 210),
         // ── folder-delta ──────────────────────────────────────────────────
-        "delta" | "deltas" | "changes"   => Color::Rgb(236,  64, 122),
+        "delta" | "deltas" | "changes" => Color::Rgb(236, 64, 122),
         // ── folder-dump ───────────────────────────────────────────────────
-        "dump" | "dumps"                 => Color::Rgb(117, 117, 117),
+        "dump" | "dumps" => Color::Rgb(117, 117, 117),
         // ── folder-examples ───────────────────────────────────────────────
-        "demo" | "demos" | "example" | "examples" | "sample" | "samples" | "sample-data"
-                                         => Color::Rgb(  0, 150, 136),
+        "demo" | "demos" | "example" | "examples" | "sample" | "samples" | "sample-data" => {
+            Color::Rgb(0, 150, 136)
+        }
         // ── folder-environment ────────────────────────────────────────────
-        "env" | "envs" | "environment" | "environments"
-                                         => Color::Rgb(102, 187, 106),
+        "env" | "envs" | "environment" | "environments" => Color::Rgb(102, 187, 106),
         // ── folder-functions ──────────────────────────────────────────────
-        "func" | "funcs" | "function" | "functions" | "lambda" | "lambdas"
-        | "logic" | "math" | "maths" | "calc" | "calcs" | "calculation"
-        | "calculations" | "composable" | "composables"
-                                         => Color::Rgb(  2, 136, 209),
+        "func" | "funcs" | "function" | "functions" | "lambda" | "lambdas" | "logic" | "math"
+        | "maths" | "calc" | "calcs" | "calculation" | "calculations" | "composable"
+        | "composables" => Color::Rgb(2, 136, 209),
         // ── folder-generator ──────────────────────────────────────────────
         "generator" | "generators" | "generated" | "cfn-gen" | "gen" | "gens" | "auto"
-        | "__generated__"                => Color::Rgb(239,  83,  80),
+        | "__generated__" => Color::Rgb(239, 83, 80),
         // ── folder-hook ───────────────────────────────────────────────────
-        "hook" | "hooks"                 => Color::Rgb(126,  87, 194),
+        "hook" | "hooks" => Color::Rgb(126, 87, 194),
         // ── folder-trigger ────────────────────────────────────────────────
-        "trigger" | "triggers"           => Color::Rgb(255, 193,   7),
+        "trigger" | "triggers" => Color::Rgb(255, 193, 7),
         // ── folder-job ────────────────────────────────────────────────────
-        "job" | "jobs"                   => Color::Rgb(255, 160,   0),
+        "job" | "jobs" => Color::Rgb(255, 160, 0),
         // ── folder-keys ───────────────────────────────────────────────────
-        "key" | "keys" | "token" | "tokens" | "jwt" | "secret" | "secrets"
-                                         => Color::Rgb( 38, 166, 154),
+        "key" | "keys" | "token" | "tokens" | "jwt" | "secret" | "secrets" => {
+            Color::Rgb(38, 166, 154)
+        }
         // ── folder-layout ─────────────────────────────────────────────────
-        "layout" | "layouts"             => Color::Rgb(  3, 155, 229),
+        "layout" | "layouts" => Color::Rgb(3, 155, 229),
         // ── folder-mail ───────────────────────────────────────────────────
-        "mail" | "mails" | "email" | "emails" | "smtp" | "mailers"
-                                         => Color::Rgb(255,  82,  82),
+        "mail" | "mails" | "email" | "emails" | "smtp" | "mailers" => Color::Rgb(255, 82, 82),
         // ── folder-mappings ───────────────────────────────────────────────
-        "mappings" | "mapping"           => Color::Rgb(175, 180,  43),
+        "mappings" | "mapping" => Color::Rgb(175, 180, 43),
         // ── folder-meta ───────────────────────────────────────────────────
-        "meta" | "metadata"              => Color::Rgb(124, 179,  66),
+        "meta" | "metadata" => Color::Rgb(124, 179, 66),
         // ── folder-changesets ─────────────────────────────────────────────
-        "changesets" | "changeset"       => Color::Rgb( 33, 150, 243),
+        "changesets" | "changeset" => Color::Rgb(33, 150, 243),
         // ── folder-packages ───────────────────────────────────────────────
-        "package" | "packages" | "pkg" | "pkgs" | "serverpackages"
-        | "devpackages" | "dependencies" => Color::Rgb( 30, 136, 229),
+        "package" | "packages" | "pkg" | "pkgs" | "serverpackages" | "devpackages"
+        | "dependencies" => Color::Rgb(30, 136, 229),
         // ── folder-shared ─────────────────────────────────────────────────
-        "shared" | "common"              => Color::Rgb(171,  71, 188),
+        "shared" | "common" => Color::Rgb(171, 71, 188),
         // ── folder-shader ─────────────────────────────────────────────────
-        "glsl" | "hlsl" | "shader" | "shaders"
-                                         => Color::Rgb(171,  71, 188),
+        "glsl" | "hlsl" | "shader" | "shaders" => Color::Rgb(171, 71, 188),
         // ── folder-stack ──────────────────────────────────────────────────
-        "stack" | "stacks"               => Color::Rgb(255, 167,  38),
+        "stack" | "stacks" => Color::Rgb(255, 167, 38),
         // ── folder-template ───────────────────────────────────────────────
-        "template" | "templates"         => Color::Rgb(141, 110,  99),
+        "template" | "templates" => Color::Rgb(141, 110, 99),
         // ── folder-utils ──────────────────────────────────────────────────
-        "util" | "utils" | "utility" | "utilities"
-                                         => Color::Rgb(124, 179,  66),
+        "util" | "utils" | "utility" | "utilities" => Color::Rgb(124, 179, 66),
         // ── folder-supabase ───────────────────────────────────────────────
-        "supabase"                       => Color::Rgb(102, 187, 106),
+        "supabase" => Color::Rgb(102, 187, 106),
         // ── folder-private ────────────────────────────────────────────────
-        "private"                        => Color::Rgb(255,  82,  82),
+        "private" => Color::Rgb(255, 82, 82),
         // ── folder-linux ──────────────────────────────────────────────────
-        "linux" | "linuxbsd" | "unix" | "wsl" | "ubuntu" | "deb" | "debian"
-        | "deepin" | "centos" | "popos" | "mint"
-                                         => Color::Rgb(249, 168,  37),
+        "linux" | "linuxbsd" | "unix" | "wsl" | "ubuntu" | "deb" | "debian" | "deepin"
+        | "centos" | "popos" | "mint" => Color::Rgb(249, 168, 37),
         // ── folder-windows ────────────────────────────────────────────────
-        "windows" | "win" | "win32" | "windows11" | "windows10" | "windowsxp"
-        | "windowsnt" | "win11" | "win10" | "winxp" | "winnt"
-                                         => Color::Rgb( 33, 150, 243),
+        "windows" | "win" | "win32" | "windows11" | "windows10" | "windowsxp" | "windowsnt"
+        | "win11" | "win10" | "winxp" | "winnt" => Color::Rgb(33, 150, 243),
         // ── folder-macos ──────────────────────────────────────────────────
-        "macos" | "mac" | "osx" | "ds_store" | "iphone" | "ipad" | "ipod"
-        | "macbook" | "macbook-air" | "macosx" | "apple"
-                                         => Color::Rgb( 84, 110, 122),
+        "macos" | "mac" | "osx" | "ds_store" | "iphone" | "ipad" | "ipod" | "macbook"
+        | "macbook-air" | "macosx" | "apple" => Color::Rgb(84, 110, 122),
         // ── folder-error ──────────────────────────────────────────────────
-        "error" | "errors" | "err" | "errs" | "crash" | "crashes"
-                                         => Color::Rgb(239,  83,  80),
+        "error" | "errors" | "err" | "errs" | "crash" | "crashes" => Color::Rgb(239, 83, 80),
         // ── folder-event ──────────────────────────────────────────────────
-        "event" | "events"               => Color::Rgb(251, 192,  45),
+        "event" | "events" => Color::Rgb(251, 192, 45),
         // ── folder-secure ─────────────────────────────────────────────────
-        "auth" | "authentication" | "secure" | "security" | "cert" | "certs"
-        | "certificate" | "certificates" | "ssl" | "cipher" | "cypher" | "tls"
-                                         => Color::Rgb(249, 168,  37),
+        "auth" | "authentication" | "secure" | "security" | "cert" | "certs" | "certificate"
+        | "certificates" | "ssl" | "cipher" | "cypher" | "tls" => Color::Rgb(249, 168, 37),
         // ── folder-custom ─────────────────────────────────────────────────
-        "custom" | "customs"             => Color::Rgb(255, 112,  67),
+        "custom" | "customs" => Color::Rgb(255, 112, 67),
         // ── folder-mock ───────────────────────────────────────────────────
         "draft" | "drafts" | "mock" | "mocks" | "__mocks__" | "fixture" | "fixtures"
-        | "concept" | "concepts" | "sketch" | "sketches" | "stub" | "stubs"
-        | "fake" | "fakes"               => Color::Rgb(141, 110,  99),
+        | "concept" | "concepts" | "sketch" | "sketches" | "stub" | "stubs" | "fake" | "fakes" => {
+            Color::Rgb(141, 110, 99)
+        }
         // ── folder-syntax ─────────────────────────────────────────────────
-        "syntax" | "syntaxes" | "spellcheck" | "spellcheckers"
-                                         => Color::Rgb(239,  83,  80),
+        "syntax" | "syntaxes" | "spellcheck" | "spellcheckers" => Color::Rgb(239, 83, 80),
         // ── folder-vm ─────────────────────────────────────────────────────
-        "vm" | "vms"                     => Color::Rgb(  3, 155, 229),
+        "vm" | "vms" => Color::Rgb(3, 155, 229),
         // ── folder-stylus ─────────────────────────────────────────────────
-        "stylus"                         => Color::Rgb(192, 202,  51),
+        "stylus" => Color::Rgb(192, 202, 51),
         // ── folder-flow ───────────────────────────────────────────────────
-        "flow-typed"                     => Color::Rgb( 84, 110, 122),
+        "flow-typed" => Color::Rgb(84, 110, 122),
         // ── folder-rules ──────────────────────────────────────────────────
-        "rule" | "rules" | "validation" | "validations" | "validator" | "validators"
-                                         => Color::Rgb(239,  83,  80),
+        "rule" | "rules" | "validation" | "validations" | "validator" | "validators" => {
+            Color::Rgb(239, 83, 80)
+        }
         // ── folder-review ─────────────────────────────────────────────────
-        "review" | "reviews" | "revisal" | "revisals" | "reviewed" | "preview" | "previews"
-                                         => Color::Rgb( 33, 150, 243),
+        "review" | "reviews" | "revisal" | "revisals" | "reviewed" | "preview" | "previews" => {
+            Color::Rgb(33, 150, 243)
+        }
         // ── folder-animation ──────────────────────────────────────────────
-        "anim" | "anims" | "animation" | "animations" | "animated" | "motion"
-        | "motions" | "transition" | "transitions" | "easing" | "easings"
-                                         => Color::Rgb(236,  64, 122),
+        "anim" | "anims" | "animation" | "animations" | "animated" | "motion" | "motions"
+        | "transition" | "transitions" | "easing" | "easings" => Color::Rgb(236, 64, 122),
         // ── folder-guard ──────────────────────────────────────────────────
-        "guard" | "guards"               => Color::Rgb( 67, 160,  71),
+        "guard" | "guards" => Color::Rgb(67, 160, 71),
         // ── folder-prisma ─────────────────────────────────────────────────
-        "prisma"                         => Color::Rgb(  0, 191, 165),
+        "prisma" => Color::Rgb(0, 191, 165),
         // ── folder-pipe ───────────────────────────────────────────────────
-        "pipe" | "pipes" | "pipeline" | "pipelines"
-                                         => Color::Rgb(  0, 137, 123),
+        "pipe" | "pipes" | "pipeline" | "pipelines" => Color::Rgb(0, 137, 123),
         // ── folder-interceptor ────────────────────────────────────────────
-        "interceptor" | "interceptors"   => Color::Rgb(255, 152,   0),
+        "interceptor" | "interceptors" => Color::Rgb(255, 152, 0),
         // ── folder-svg ────────────────────────────────────────────────────
-        "svg" | "svgs" | "vector" | "vectors"
-                                         => Color::Rgb(255, 179,   0),
+        "svg" | "svgs" | "vector" | "vectors" => Color::Rgb(255, 179, 0),
         // ── folder-nuxt (non-dot) ─────────────────────────────────────────
-        "nuxt"                           => Color::Rgb( 84, 110, 122),
+        "nuxt" => Color::Rgb(84, 110, 122),
         // ── folder-terraform (non-dot) ────────────────────────────────────
-        "terraform"                      => Color::Rgb( 92, 107, 192),
+        "terraform" => Color::Rgb(92, 107, 192),
         // ── folder-mobile ─────────────────────────────────────────────────
-        "mobile" | "mobiles" | "portable" | "portability" | "phone" | "phones"
-                                         => Color::Rgb(255,  82,  82),
+        "mobile" | "mobiles" | "portable" | "portability" | "phone" | "phones" => {
+            Color::Rgb(255, 82, 82)
+        }
         // ── folder-stencil ────────────────────────────────────────────────
-        "stencil"                        => Color::Rgb( 68, 138, 255),
+        "stencil" => Color::Rgb(68, 138, 255),
         // ── folder-firebase ───────────────────────────────────────────────
-        "firebase"                       => Color::Rgb(255, 145,   0),
+        "firebase" => Color::Rgb(255, 145, 0),
         // ── folder-firestore ──────────────────────────────────────────────
-        "firestore" | "cloud-firestore" | "firebase-firestore"
-                                         => Color::Rgb( 33, 150, 243),
+        "firestore" | "cloud-firestore" | "firebase-firestore" => Color::Rgb(33, 150, 243),
         // ── folder-cloud-functions ────────────────────────────────────────
-        "cloud-functions" | "cloudfunctions" | "firebase-cloud-functions"
-        | "firebase-cloudfunctions"      => Color::Rgb(187, 222, 251),
+        "cloud-functions"
+        | "cloudfunctions"
+        | "firebase-cloud-functions"
+        | "firebase-cloudfunctions" => Color::Rgb(187, 222, 251),
         // ── folder-svelte ─────────────────────────────────────────────────
-        "svelte" | "svelte-kit"          => Color::Rgb(255,  87,  34),
+        "svelte" | "svelte-kit" => Color::Rgb(255, 87, 34),
         // ── folder-update ─────────────────────────────────────────────────
-        "update" | "updates" | "upgrade" | "upgrades"
-                                         => Color::Rgb( 67, 160,  71),
+        "update" | "updates" | "upgrade" | "upgrades" => Color::Rgb(67, 160, 71),
         // ── folder-mjml ───────────────────────────────────────────────────
-        "mjml"                           => Color::Rgb(255,  87,  34),
+        "mjml" => Color::Rgb(255, 87, 34),
         // ── folder-admin ──────────────────────────────────────────────────
-        "admin" | "admins" | "manager" | "managers" | "moderator" | "moderators"
-                                         => Color::Rgb( 84, 110, 122),
+        "admin" | "admins" | "manager" | "managers" | "moderator" | "moderators" => {
+            Color::Rgb(84, 110, 122)
+        }
         // ── folder-jupyter ────────────────────────────────────────────────
-        "jupyter" | "notebook" | "notebooks" | "ipynb"
-                                         => Color::Rgb(255, 152,   0),
+        "jupyter" | "notebook" | "notebooks" | "ipynb" => Color::Rgb(255, 152, 0),
         // ── folder-scala ──────────────────────────────────────────────────
-        "scala"                          => Color::Rgb(244,  67,  54),
+        "scala" => Color::Rgb(244, 67, 54),
         // ── folder-connection ─────────────────────────────────────────────
-        "connection" | "connections" | "integration" | "integrations"
-        | "remote" | "remotes"           => Color::Rgb(  0, 172, 193),
+        "connection" | "connections" | "integration" | "integrations" | "remote" | "remotes" => {
+            Color::Rgb(0, 172, 193)
+        }
         // ── folder-quasar ─────────────────────────────────────────────────
-        "quasar"                         => Color::Rgb( 25, 118, 210),
+        "quasar" => Color::Rgb(25, 118, 210),
         // ── folder-next (non-dot) ─────────────────────────────────────────
-        "next"                           => Color::Rgb( 84, 110, 122),
+        "next" => Color::Rgb(84, 110, 122),
         // ── folder-dal ────────────────────────────────────────────────────
-        "dal" | "data-access" | "data-access-layer"
-                                         => Color::Rgb(244,  67,  54),
+        "dal" | "data-access" | "data-access-layer" => Color::Rgb(244, 67, 54),
         // ── folder-cobol ──────────────────────────────────────────────────
-        "cobol"                          => Color::Rgb(  2, 136, 209),
+        "cobol" => Color::Rgb(2, 136, 209),
         // ── folder-yarn (non-dot) ─────────────────────────────────────────
-        "yarn"                           => Color::Rgb(  2, 136, 209),
+        "yarn" => Color::Rgb(2, 136, 209),
         // ── folder-husky (non-dot) ────────────────────────────────────────
-        "husky"                          => Color::Rgb( 96, 125, 139),
+        "husky" => Color::Rgb(96, 125, 139),
         // ── folder-storybook ──────────────────────────────────────────────
-        "storybook" | "stories" | "story"
-                                         => Color::Rgb(255,  64, 129),
+        "storybook" | "stories" | "story" => Color::Rgb(255, 64, 129),
         // ── folder-base ───────────────────────────────────────────────────
-        "base" | "bases"                 => Color::Rgb(141, 110,  99),
+        "base" | "bases" => Color::Rgb(141, 110, 99),
         // ── folder-cart ───────────────────────────────────────────────────
-        "cart" | "shopping-cart" | "shopping" | "shop"
-                                         => Color::Rgb(  0, 150, 136),
+        "cart" | "shopping-cart" | "shopping" | "shop" => Color::Rgb(0, 150, 136),
         // ── folder-home ───────────────────────────────────────────────────
-        "home" | "start" | "main" | "landing"
-                                         => Color::Rgb(255,  82,  82),
+        "home" | "start" | "main" | "landing" => Color::Rgb(255, 82, 82),
         // ── folder-project ────────────────────────────────────────────────
-        "project" | "projects" | "proj" | "projs"
-                                         => Color::Rgb( 30, 136, 229),
+        "project" | "projects" | "proj" | "projs" => Color::Rgb(30, 136, 229),
         // ── folder-prompts ────────────────────────────────────────────────
-        "prompt" | "prompts"             => Color::Rgb( 92, 107, 192),
+        "prompt" | "prompts" => Color::Rgb(92, 107, 192),
         // ── folder-interface ──────────────────────────────────────────────
-        "interface" | "interfaces"       => Color::Rgb( 25, 118, 210),
+        "interface" | "interfaces" => Color::Rgb(25, 118, 210),
         // ── folder-netlify ────────────────────────────────────────────────
-        "netlify"                        => Color::Rgb( 38, 166, 154),
+        "netlify" => Color::Rgb(38, 166, 154),
         // ── folder-enum ───────────────────────────────────────────────────
-        "enum" | "enums"                 => Color::Rgb( 38, 166, 154),
+        "enum" | "enums" => Color::Rgb(38, 166, 154),
         // ── folder-contract ───────────────────────────────────────────────
-        "pact" | "pacts" | "contract" | "contracts" | "contract-testing"
-        | "contract-test" | "contract-tests"
-                                         => Color::Rgb( 68, 138, 255),
+        "pact" | "pacts" | "contract" | "contracts" | "contract-testing" | "contract-test"
+        | "contract-tests" => Color::Rgb(68, 138, 255),
         // ── folder-helm ───────────────────────────────────────────────────
-        "helm" | "helmchart" | "helmcharts"
-                                         => Color::Rgb(  0, 172, 193),
+        "helm" | "helmchart" | "helmcharts" => Color::Rgb(0, 172, 193),
         // ── folder-queue ──────────────────────────────────────────────────
-        "queue" | "queues" | "bull" | "mq"
-                                         => Color::Rgb(  3, 155, 229),
+        "queue" | "queues" | "bull" | "mq" => Color::Rgb(3, 155, 229),
         // ── folder-vercel ─────────────────────────────────────────────────
-        "vercel" | "now"                 => Color::Rgb( 84, 110, 122),
+        "vercel" | "now" => Color::Rgb(84, 110, 122),
         // ── folder-cypress ────────────────────────────────────────────────
-        "cypress"                        => Color::Rgb(  0, 150, 136),
+        "cypress" => Color::Rgb(0, 150, 136),
         // ── folder-decorators ─────────────────────────────────────────────
-        "decorator" | "decorators"       => Color::Rgb(171,  71, 188),
+        "decorator" | "decorators" => Color::Rgb(171, 71, 188),
         // ── folder-java ───────────────────────────────────────────────────
-        "java"                           => Color::Rgb(239,  83,  80),
+        "java" => Color::Rgb(239, 83, 80),
         // ── folder-resolver ───────────────────────────────────────────────
-        "resolver" | "resolvers"         => Color::Rgb( 67, 160,  71),
+        "resolver" | "resolvers" => Color::Rgb(67, 160, 71),
         // ── folder-angular ────────────────────────────────────────────────
-        "angular"                        => Color::Rgb(255,  82,  82),
+        "angular" => Color::Rgb(255, 82, 82),
         // ── folder-unity ──────────────────────────────────────────────────
-        "unity"                          => Color::Rgb( 33, 150, 243),
+        "unity" => Color::Rgb(33, 150, 243),
         // ── folder-pdf ────────────────────────────────────────────────────
-        "pdf" | "pdfs"                   => Color::Rgb(239,  83,  80),
+        "pdf" | "pdfs" => Color::Rgb(239, 83, 80),
         // ── folder-proto ──────────────────────────────────────────────────
-        "protobuf" | "protobufs" | "proto" | "protos"
-                                         => Color::Rgb(255, 112,  67),
+        "protobuf" | "protobufs" | "proto" | "protos" => Color::Rgb(255, 112, 67),
         // ── folder-plastic ────────────────────────────────────────────────
-        "plastic"                        => Color::Rgb(255, 152,   0),
+        "plastic" => Color::Rgb(255, 152, 0),
         // ── folder-gamemaker ──────────────────────────────────────────────
-        "gamemaker" | "gamemaker2"       => Color::Rgb( 38, 166, 154),
+        "gamemaker" | "gamemaker2" => Color::Rgb(38, 166, 154),
         // ── folder-mercurial ──────────────────────────────────────────────
-        "hg" | "hghooks" | "hgext"       => Color::Rgb(120, 144, 156),
+        "hg" | "hghooks" | "hgext" => Color::Rgb(120, 144, 156),
         // ── folder-godot ──────────────────────────────────────────────────
-        "godot" | "godot-cpp"            => Color::Rgb( 66, 165, 245),
+        "godot" | "godot-cpp" => Color::Rgb(66, 165, 245),
         // ── folder-lottie ─────────────────────────────────────────────────
-        "lottie" | "lotties" | "lottiefiles"
-                                         => Color::Rgb(  0, 191, 165),
+        "lottie" | "lotties" | "lottiefiles" => Color::Rgb(0, 191, 165),
         // ── folder-taskfile ───────────────────────────────────────────────
-        "taskfile" | "taskfiles"         => Color::Rgb( 77, 182, 172),
+        "taskfile" | "taskfiles" => Color::Rgb(77, 182, 172),
         // ── folder-drizzle ────────────────────────────────────────────────
-        "drizzle"                        => Color::Rgb( 76, 175,  80),
+        "drizzle" => Color::Rgb(76, 175, 80),
         // ── folder-cloudflare ─────────────────────────────────────────────
-        "cloudflare"                     => Color::Rgb(255, 138, 101),
+        "cloudflare" => Color::Rgb(255, 138, 101),
         // ── folder-seeders ────────────────────────────────────────────────
-        "seeds" | "seeders" | "seed" | "seeding"
-                                         => Color::Rgb( 67, 160,  71),
+        "seeds" | "seeders" | "seed" | "seeding" => Color::Rgb(67, 160, 71),
         // ── folder-bicep ──────────────────────────────────────────────────
-        "bicep"                          => Color::Rgb(251, 192,  45),
+        "bicep" => Color::Rgb(251, 192, 45),
         // ── folder-snapcraft ──────────────────────────────────────────────
-        "snap" | "snapcraft"             => Color::Rgb(102, 187, 106),
+        "snap" | "snapcraft" => Color::Rgb(102, 187, 106),
         // ── folder-development ────────────────────────────────────────────
-        "dev" | "development"            => Color::Rgb(  2, 136, 209),
+        "dev" | "development" => Color::Rgb(2, 136, 209),
         // ── folder-flutter ────────────────────────────────────────────────
-        "flutter"                        => Color::Rgb(  3, 169, 244),
+        "flutter" => Color::Rgb(3, 169, 244),
         // ── folder-snippet ────────────────────────────────────────────────
-        "snippet" | "snippets"           => Color::Rgb(255, 152,   0),
+        "snippet" | "snippets" => Color::Rgb(255, 152, 0),
         // ── folder-element ────────────────────────────────────────────────
-        "element" | "elements"           => Color::Rgb(171,  71, 188),
+        "element" | "elements" => Color::Rgb(171, 71, 188),
         // ── folder-src-tauri ──────────────────────────────────────────────
-        "src-tauri"                      => Color::Rgb( 69,  90, 100),
+        "src-tauri" => Color::Rgb(69, 90, 100),
         // ── folder-favicon ────────────────────────────────────────────────
-        "favicon" | "favicons"           => Color::Rgb(251, 192,  45),
+        "favicon" | "favicons" => Color::Rgb(251, 192, 45),
         // ── folder-features ───────────────────────────────────────────────
-        "feature" | "features" | "feat" | "feats"
-                                         => Color::Rgb(104, 159,  56),
+        "feature" | "features" | "feat" | "feats" => Color::Rgb(104, 159, 56),
         // ── folder-lefthook ───────────────────────────────────────────────
-        "lefthook" | "lefthook-local"    => Color::Rgb( 96, 125, 139),
+        "lefthook" | "lefthook-local" => Color::Rgb(96, 125, 139),
         // ── folder-bloc ───────────────────────────────────────────────────
-        "bloc" | "cubit" | "blocs" | "cubits"
-                                         => Color::Rgb( 38, 166, 154),
+        "bloc" | "cubit" | "blocs" | "cubits" => Color::Rgb(38, 166, 154),
         // ── folder-powershell ─────────────────────────────────────────────
-        "powershell" | "ps" | "ps1"      => Color::Rgb(  3, 169, 244),
+        "powershell" | "ps" | "ps1" => Color::Rgb(3, 169, 244),
         // ── folder-repository ─────────────────────────────────────────────
-        "repository" | "repositories" | "repo" | "repos"
-                                         => Color::Rgb( 67, 160,  71),
+        "repository" | "repositories" | "repo" | "repos" => Color::Rgb(67, 160, 71),
         // ── folder-luau ───────────────────────────────────────────────────
-        "luau"                           => Color::Rgb( 66, 165, 245),
+        "luau" => Color::Rgb(66, 165, 245),
         // ── folder-obsidian ───────────────────────────────────────────────
-        "obsidian"                       => Color::Rgb(103,  58, 183),
+        "obsidian" => Color::Rgb(103, 58, 183),
         // ── folder-trash ──────────────────────────────────────────────────
-        "trash"                          => Color::Rgb(244,  67,  54),
+        "trash" => Color::Rgb(244, 67, 54),
         // ── folder-cline ──────────────────────────────────────────────────
-        "cline_docs"                     => Color::Rgb( 66, 165, 245),
+        "cline_docs" => Color::Rgb(66, 165, 245),
         // ── folder-liquibase ──────────────────────────────────────────────
-        "liquibase"                      => Color::Rgb(244,  67,  54),
+        "liquibase" => Color::Rgb(244, 67, 54),
         // ── folder-dart ───────────────────────────────────────────────────
-        "dart" | "dart_tool" | "dart_tools"
-                                         => Color::Rgb( 33, 150, 243),
+        "dart" | "dart_tool" | "dart_tools" => Color::Rgb(33, 150, 243),
         // ── folder-zeabur ─────────────────────────────────────────────────
-        "zeabur"                         => Color::Rgb(126,  87, 194),
+        "zeabur" => Color::Rgb(126, 87, 194),
         // ── folder-kusto ──────────────────────────────────────────────────
-        "kusto" | "kql"                  => Color::Rgb( 30, 136, 229),
+        "kusto" | "kql" => Color::Rgb(30, 136, 229),
         // ── folder-policy ─────────────────────────────────────────────────
-        "policy" | "policies"            => Color::Rgb(  2, 136, 209),
+        "policy" | "policies" => Color::Rgb(2, 136, 209),
         // ── folder-attachment ─────────────────────────────────────────────
-        "attachment" | "attachments"     => Color::Rgb(156,  39, 176),
+        "attachment" | "attachments" => Color::Rgb(156, 39, 176),
         // ── folder-bibliography ───────────────────────────────────────────
-        "bibliography" | "bibliographies" | "book" | "books"
-                                         => Color::Rgb(161, 136, 127),
+        "bibliography" | "bibliographies" | "book" | "books" => Color::Rgb(161, 136, 127),
         // ── folder-link ───────────────────────────────────────────────────
-        "link" | "links"                 => Color::Rgb(126,  87, 194),
+        "link" | "links" => Color::Rgb(126, 87, 194),
         // ── folder-pytorch ────────────────────────────────────────────────
-        "pytorch" | "torch"              => Color::Rgb(244,  81,  30),
+        "pytorch" | "torch" => Color::Rgb(244, 81, 30),
         // ── folder-blender ────────────────────────────────────────────────
-        "blender" | "blender-assets" | "blender-files" | "blender-project"
-        | "blender-models"               => Color::Rgb(255, 152,   0),
+        "blender" | "blender-assets" | "blender-files" | "blender-project" | "blender-models" => {
+            Color::Rgb(255, 152, 0)
+        }
         // ── folder-atom ───────────────────────────────────────────────────
-        "atoms" | "atom"                 => Color::Rgb( 30, 136, 229),
+        "atoms" | "atom" => Color::Rgb(30, 136, 229),
         // ── folder-molecule ───────────────────────────────────────────────
-        "molecules" | "molecule"         => Color::Rgb(255, 152,   0),
+        "molecules" | "molecule" => Color::Rgb(255, 152, 0),
         // ── folder-organism ───────────────────────────────────────────────
-        "organisms" | "organism"         => Color::Rgb(  0, 150, 136),
+        "organisms" | "organism" => Color::Rgb(0, 150, 136),
         // ── folder-claude (non-dot) ───────────────────────────────────────
-        "claude"                         => Color::Rgb(255, 112,  67),
+        "claude" => Color::Rgb(255, 112, 67),
         // ── folder-gemini-ai (non-dot) ────────────────────────────────────
-        "gemini" | "gemini-ai" | "geminiai"
-                                         => Color::Rgb( 66, 165, 245),
+        "gemini" | "gemini-ai" | "geminiai" => Color::Rgb(66, 165, 245),
         // ── folder-input ──────────────────────────────────────────────────
-        "input" | "inputs" | "io" | "in" => Color::Rgb(  0, 172, 193),
+        "input" | "inputs" | "io" | "in" => Color::Rgb(0, 172, 193),
         // ── folder-salt ───────────────────────────────────────────────────
-        "salt" | "saltstack"             => Color::Rgb(  3, 169, 244),
+        "salt" | "saltstack" => Color::Rgb(3, 169, 244),
         // ── folder-simulations ────────────────────────────────────────────
-        "simulations" | "simulation" | "sim" | "sims"
-                                         => Color::Rgb(171,  71, 188),
+        "simulations" | "simulation" | "sim" | "sims" => Color::Rgb(171, 71, 188),
         // ── folder-metro ──────────────────────────────────────────────────
-        "metro"                          => Color::Rgb(239,  83,  80),
+        "metro" => Color::Rgb(239, 83, 80),
         // ── folder-filter ─────────────────────────────────────────────────
-        "filter" | "filters"             => Color::Rgb(126,  87, 194),
+        "filter" | "filters" => Color::Rgb(126, 87, 194),
         // ── folder-toc ────────────────────────────────────────────────────
-        "toc" | "table-of-contents"      => Color::Rgb( 33, 150, 243),
+        "toc" | "table-of-contents" => Color::Rgb(33, 150, 243),
         // ── folder-cue ────────────────────────────────────────────────────
-        "cue" | "cues"                   => Color::Rgb( 68, 138, 255),
+        "cue" | "cues" => Color::Rgb(68, 138, 255),
         // ── folder-license ────────────────────────────────────────────────
-        "license" | "licenses"           => Color::Rgb(255,  87,  34),
+        "license" | "licenses" => Color::Rgb(255, 87, 34),
         // ── folder-form ───────────────────────────────────────────────────
-        "form" | "forms"                 => Color::Rgb(156,  39, 176),
+        "form" | "forms" => Color::Rgb(156, 39, 176),
         // ── folder-skills ─────────────────────────────────────────────────
-        "skill" | "skills"               => Color::Rgb(255, 143,   0),
+        "skill" | "skills" => Color::Rgb(255, 143, 0),
         // ── folder-instructions (clone: folder-meta + cyan-A700) ──────────
-        "instruction" | "instructions"   => Color::Rgb(  0, 229, 255),
+        "instruction" | "instructions" => Color::Rgb(0, 229, 255),
 
         // ── Misc fallbacks not in material theme ──────────────────────────
-        "gateway" | "gateways"           => Color::Rgb(103,  58, 183),
-        "session" | "sessions"           => Color::Rgb( 38, 166, 154),
-        "users" | "user" | "accounts" | "account" | "profiles" | "profile"
-        | "members" | "member"           => Color::Rgb( 30, 136, 229),
-        "deploy" | "deployments" | "deployment" | "releases" | "release"
-                                         => Color::Rgb( 57, 168,  80),
-        "workflows" | "workflow"         => Color::Rgb( 30, 136, 229),
-        "actions" | "action"             => Color::Rgb( 35, 134,  54),
-        "workers" | "worker"             => Color::Rgb(255, 160,   0),
-        "observers" | "observer" | "watchers" | "watcher"
-                                         => Color::Rgb(  0, 150, 136),
-        "cron" | "crons" | "scheduler" | "schedules" | "schedule"
-                                         => Color::Rgb(255, 193,   7),
-        "notifications" | "notification" | "alerts" | "alert"
-                                         => Color::Rgb(255, 167,  38),
-        "sockets" | "socket" | "websockets" | "websocket" | "ws"
-                                         => Color::Rgb(  0, 188, 212),
-        "queries" | "query"              => Color::Rgb( 66, 133, 244),
-        "mutations" | "mutation"         => Color::Rgb(233,  30,  99),
-        "subscriptions" | "subscription" => Color::Rgb(229,  57, 172),
-        "factories" | "factory"          => Color::Rgb( 66, 133, 244),
-        "snapshot"                       => Color::Rgb(141, 110,  99),
-        "unit"                           => Color::Rgb(  0, 191, 165),
-        "playwright" | "selenium"        => Color::Rgb( 45,  52,  54),
-        "legacy" | "deprecated" | "old"  => Color::Rgb( 90,  90,  90),
-        "swagger" | "openapi"            => Color::Rgb( 76, 175,  80),
-        "datasets" | "dataset"           => Color::Rgb( 30, 136, 229),
-        "weights"                        => Color::Rgb(255, 160,   0),
-        "experiments" | "experiment" | "runs"
-                                         => Color::Rgb(156,  39, 176),
-        "mixins" | "mixin"               => Color::Rgb( 65, 184, 131),
-        "reducers" | "reducer" | "selectors" | "selector"
-                                         => Color::Rgb(126,  87, 194),
-        "adapters" | "adapter" | "connectors" | "connector"
-                                         => Color::Rgb(  0, 150, 136),
-        "transformers" | "transformer" | "transforms" | "transform"
-                                         => Color::Rgb(  0, 150, 136),
-        "analytics" | "metrics" | "telemetry"
-                                         => Color::Rgb( 67, 160,  71),
-        "monitoring" | "health" | "healthcheck"
-                                         => Color::Rgb( 76, 175,  80),
-        "tracing" | "traces" | "trace"   => Color::Rgb(100, 100, 100),
-        "audit" | "audits"               => Color::Rgb(211,  47,  47),
-        "exceptions" | "exception"       => Color::Rgb(239,  83,  80),
-        "internal"                       => Color::Rgb( 30,  80, 160),
-        "cmd"                            => Color::Rgb(  3, 169, 244),
+        "gateway" | "gateways" => Color::Rgb(103, 58, 183),
+        "session" | "sessions" => Color::Rgb(38, 166, 154),
+        "users" | "user" | "accounts" | "account" | "profiles" | "profile" | "members"
+        | "member" => Color::Rgb(30, 136, 229),
+        "deploy" | "deployments" | "deployment" | "releases" => Color::Rgb(57, 168, 80),
+        "workflows" | "workflow" => Color::Rgb(30, 136, 229),
+        "actions" | "action" => Color::Rgb(35, 134, 54),
+        "workers" | "worker" => Color::Rgb(255, 160, 0),
+        "observers" | "observer" | "watchers" | "watcher" => Color::Rgb(0, 150, 136),
+        "cron" | "crons" | "scheduler" | "schedules" | "schedule" => Color::Rgb(255, 193, 7),
+        "notifications" | "notification" | "alerts" | "alert" => Color::Rgb(255, 167, 38),
+        "sockets" | "socket" | "websockets" | "websocket" | "ws" => Color::Rgb(0, 188, 212),
+        "queries" | "query" => Color::Rgb(66, 133, 244),
+        "mutations" | "mutation" => Color::Rgb(233, 30, 99),
+        "subscriptions" | "subscription" => Color::Rgb(229, 57, 172),
+        "factories" | "factory" => Color::Rgb(66, 133, 244),
+        "snapshot" => Color::Rgb(141, 110, 99),
+        "unit" => Color::Rgb(0, 191, 165),
+        "playwright" | "selenium" => Color::Rgb(45, 52, 54),
+        "legacy" | "deprecated" | "old" => Color::Rgb(90, 90, 90),
+        "swagger" | "openapi" => Color::Rgb(76, 175, 80),
+        "datasets" | "dataset" => Color::Rgb(30, 136, 229),
+        "weights" => Color::Rgb(255, 160, 0),
+        "experiments" | "experiment" | "runs" => Color::Rgb(156, 39, 176),
+        "mixins" | "mixin" => Color::Rgb(65, 184, 131),
+        "reducers" | "reducer" | "selectors" | "selector" => Color::Rgb(126, 87, 194),
+        "adapters" | "adapter" | "connectors" | "connector" => Color::Rgb(0, 150, 136),
+        "transformers" | "transformer" | "transforms" | "transform" => Color::Rgb(0, 150, 136),
+        "analytics" | "metrics" | "telemetry" => Color::Rgb(67, 160, 71),
+        "monitoring" | "health" | "healthcheck" => Color::Rgb(76, 175, 80),
+        "tracing" | "traces" | "trace" => Color::Rgb(100, 100, 100),
+        "audit" | "audits" => Color::Rgb(211, 47, 47),
+        "exceptions" | "exception" => Color::Rgb(239, 83, 80),
+        "internal" => Color::Rgb(30, 80, 160),
 
         _ => {
             // Prefix/suffix patterns
             if lower.starts_with("config") || lower.ends_with("config") {
-                return Color::Rgb(  0, 172, 193);
+                return Color::Rgb(0, 172, 193);
             }
             if lower.starts_with("component") || lower.ends_with("components") {
-                return Color::Rgb(192, 202,  51);
+                return Color::Rgb(192, 202, 51);
             }
             if lower.starts_with("test_") || lower.ends_with("_test") || lower.ends_with("_spec") {
-                return Color::Rgb(  0, 191, 165);
+                return Color::Rgb(0, 191, 165);
             }
             if lower.ends_with("_docs") || lower.ends_with("-docs") {
-                return Color::Rgb(  2, 119, 189);
+                return Color::Rgb(2, 119, 189);
             }
             if lower.ends_with("_scripts") {
-                return Color::Rgb( 84, 110, 122);
+                return Color::Rgb(84, 110, 122);
             }
             if lower.starts_with("api_") || lower.ends_with("_api") {
-                return Color::Rgb(251, 192,  45);
+                return Color::Rgb(251, 192, 45);
             }
             if lower.ends_with("_utils") || lower.ends_with("_helpers") {
-                return Color::Rgb(124, 179,  66);
+                return Color::Rgb(124, 179, 66);
             }
             Color::Rgb(130, 130, 130) // default gray
         }
@@ -885,8 +826,9 @@ fn nf_entry_icon_color(name: &str, is_dir: bool) -> Color {
     let ext = lower.rsplit('.').next().unwrap_or("");
 
     match lower.as_str() {
-        "dockerfile" | "containerfile"
-        | "docker-compose.yml" | "docker-compose.yaml" => return Color::Rgb(13, 183, 237),
+        "dockerfile" | "containerfile" | "docker-compose.yml" | "docker-compose.yaml" => {
+            return Color::Rgb(13, 183, 237)
+        }
         "makefile" | "gnumakefile" | "bsdmakefile" | "cmakelists.txt" => {
             return Color::Rgb(100, 180, 100)
         }
@@ -899,67 +841,65 @@ fn nf_entry_icon_color(name: &str, is_dir: bool) -> Color {
         "license" | "licence" | "license.md" | "licence.md" | "license.txt" => {
             return Color::Rgb(170, 170, 170)
         }
-        "readme" | "readme.md" | "readme.txt" | "readme.rst" => {
-            return Color::Rgb(68, 139, 241)
-        }
+        "readme" | "readme.md" | "readme.txt" | "readme.rst" => return Color::Rgb(68, 139, 241),
         "vagrantfile" | "gemfile" | "rakefile" | "podfile" => return Color::Rgb(185, 49, 42),
         "brewfile" => return Color::Rgb(245, 166, 35),
         _ => {}
     }
 
     match ext {
-        "rs" | "rlib" => Color::Rgb(222, 100, 42),                   // Rust orange
-        "py" | "pyw" | "pyi" | "pyc" => Color::Rgb(255, 212, 59),    // Python yellow
-        "js" | "mjs" | "cjs" => Color::Rgb(240, 219, 79),            // JS yellow
-        "ts" | "cts" | "mts" => Color::Rgb(49, 120, 198),            // TS blue
-        "jsx" => Color::Rgb(97, 218, 251),                            // React cyan
+        "rs" | "rlib" => Color::Rgb(222, 100, 42), // Rust orange
+        "py" | "pyw" | "pyi" | "pyc" => Color::Rgb(255, 212, 59), // Python yellow
+        "js" | "mjs" | "cjs" => Color::Rgb(240, 219, 79), // JS yellow
+        "ts" | "cts" | "mts" => Color::Rgb(49, 120, 198), // TS blue
+        "jsx" => Color::Rgb(97, 218, 251),         // React cyan
         "tsx" => Color::Rgb(97, 218, 251),
-        "html" | "htm" | "xhtml" => Color::Rgb(228, 77, 38),         // HTML5 orange
-        "css" => Color::Rgb(38, 121, 228),                            // CSS blue
-        "scss" | "sass" => Color::Rgb(205, 103, 153),                 // Sass pink
+        "html" | "htm" | "xhtml" => Color::Rgb(228, 77, 38), // HTML5 orange
+        "css" => Color::Rgb(38, 121, 228),                   // CSS blue
+        "scss" | "sass" => Color::Rgb(205, 103, 153),        // Sass pink
         "less" => Color::Rgb(29, 54, 95),
-        "go" => Color::Rgb(0, 173, 216),                              // Go cyan
-        "rb" | "erb" | "gemspec" => Color::Rgb(185, 49, 42),         // Ruby red
-        "java" => Color::Rgb(248, 152, 32),                           // Java orange
-        "kt" | "kts" => Color::Rgb(127, 82, 255),                    // Kotlin purple
+        "go" => Color::Rgb(0, 173, 216), // Go cyan
+        "rb" | "erb" | "gemspec" => Color::Rgb(185, 49, 42), // Ruby red
+        "java" => Color::Rgb(248, 152, 32), // Java orange
+        "kt" | "kts" => Color::Rgb(127, 82, 255), // Kotlin purple
         "scala" | "sc" => Color::Rgb(220, 50, 47),
         "groovy" | "gvy" | "gradle" => Color::Rgb(100, 180, 100),
-        "clj" | "cljs" | "cljc" | "edn" => Color::Rgb(99, 189, 74),  // Clojure green
-        "c" | "h" => Color::Rgb(85, 86, 148),                        // C blue-purple
+        "clj" | "cljs" | "cljc" | "edn" => Color::Rgb(99, 189, 74), // Clojure green
+        "c" | "h" => Color::Rgb(85, 86, 148),                       // C blue-purple
         "cpp" | "cxx" | "cc" | "c++" | "hpp" | "hxx" | "hh" => Color::Rgb(0, 89, 157),
-        "cs" | "csx" => Color::Rgb(104, 33, 122),                    // C# purple
-        "m" | "mm" => Color::Rgb(85, 86, 148),                       // ObjC
-        "swift" => Color::Rgb(240, 81, 56),                          // Swift orange-red
-        "hs" | "lhs" => Color::Rgb(94, 80, 134),                     // Haskell purple
-        "ex" | "exs" | "heex" => Color::Rgb(100, 55, 110),           // Elixir purple
+        "cs" | "csx" => Color::Rgb(104, 33, 122), // C# purple
+        "m" | "mm" => Color::Rgb(85, 86, 148),    // ObjC
+        "swift" => Color::Rgb(240, 81, 56),       // Swift orange-red
+        "hs" | "lhs" => Color::Rgb(94, 80, 134),  // Haskell purple
+        "ex" | "exs" | "heex" => Color::Rgb(100, 55, 110), // Elixir purple
         "erl" | "hrl" => Color::Rgb(186, 50, 50),
-        "elm" => Color::Rgb(96, 181, 204),                           // Elm blue
+        "elm" => Color::Rgb(96, 181, 204), // Elm blue
         "ml" | "mli" | "fs" | "fsi" | "fsx" => Color::Rgb(55, 98, 161),
-        "zig" => Color::Rgb(247, 163, 26),                           // Zig yellow
-        "dart" => Color::Rgb(0, 180, 216),                           // Dart blue
-        "lua" => Color::Rgb(0, 0, 200),                              // Lua dark blue
-        "nim" | "nims" => Color::Rgb(255, 213, 0),                   // Nim yellow
-        "cr" => Color::Rgb(0, 0, 0),                                 // Crystal black (on dark bg: white)
+        "zig" => Color::Rgb(247, 163, 26),         // Zig yellow
+        "dart" => Color::Rgb(0, 180, 216),         // Dart blue
+        "lua" => Color::Rgb(0, 0, 200),            // Lua dark blue
+        "nim" | "nims" => Color::Rgb(255, 213, 0), // Nim yellow
+        "cr" => Color::Rgb(0, 0, 0),               // Crystal black (on dark bg: white)
         "sh" | "bash" | "bats" | "zsh" | "fish" | "ps1" | "psm1" | "psd1" => {
-            Color::Rgb(137, 224, 81)                                  // Shell green
+            Color::Rgb(137, 224, 81) // Shell green
         }
         "json" | "json5" | "jsonc" => Color::Rgb(203, 185, 8),
-        "yaml" | "yml" => Color::Rgb(203, 23, 30),                   // YAML red
-        "toml" => Color::Rgb(156, 100, 60),                          // TOML brown
-        "xml" | "xaml" | "svg" => Color::Rgb(255, 165, 0),          // XML orange
+        "yaml" | "yml" => Color::Rgb(203, 23, 30), // YAML red
+        "toml" => Color::Rgb(156, 100, 60),        // TOML brown
+        "xml" | "xaml" | "svg" => Color::Rgb(255, 165, 0), // XML orange
         "ini" | "cfg" | "conf" | "config" | "env" | "properties" | "props" => {
             Color::Rgb(170, 170, 170)
         }
         "lock" => Color::Rgb(200, 150, 50),
-        "md" | "mdx" | "markdown" => Color::Rgb(68, 139, 241),       // Markdown blue
+        "md" | "mdx" | "markdown" => Color::Rgb(68, 139, 241), // Markdown blue
         "txt" | "text" | "rst" | "rest" | "adoc" | "asciidoc" => Color::Rgb(180, 180, 180),
-        "pdf" => Color::Rgb(224, 50, 50),                            // PDF red
-        "graphql" | "gql" | "prisma" => Color::Rgb(229, 53, 171),   // GraphQL pink
-        "tf" | "tfvars" | "hcl" => Color::Rgb(92, 67, 209),         // Terraform purple
-        "nix" => Color::Rgb(126, 186, 228),                          // NixOS light blue
+        "pdf" => Color::Rgb(224, 50, 50), // PDF red
+        "graphql" | "gql" | "prisma" => Color::Rgb(229, 53, 171), // GraphQL pink
+        "tf" | "tfvars" | "hcl" => Color::Rgb(92, 67, 209), // Terraform purple
+        "nix" => Color::Rgb(126, 186, 228), // NixOS light blue
         "ipynb" => Color::Rgb(240, 100, 0),
-        "r" | "rmd" => Color::Rgb(39, 109, 195),                    // R blue
-        "jl" => Color::Rgb(149, 88, 178),                            // Julia purple
+        "r" | "rmd" => Color::Rgb(39, 109, 195), // R blue
+        "jl" => Color::Rgb(149, 88, 178),        // Julia purple
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff" | "heic" => {
             Color::Rgb(200, 150, 220)
         }
@@ -980,7 +920,11 @@ fn nf_entry_icon_color(name: &str, is_dir: bool) -> Color {
 /// Returns a plain fallback icon (ASCII arrow) for when Nerd Fonts are off.
 fn ascii_entry_icon(is_dir: bool, expanded: bool) -> &'static str {
     if is_dir {
-        if expanded { "▾ " } else { "▸ " }
+        if expanded {
+            "▾ "
+        } else {
+            "▸ "
+        }
     } else {
         "  "
     }
@@ -1000,30 +944,14 @@ fn vt100_color(c: vt100::Color) -> Option<Color> {
 }
 
 /// Check if a cell (row, col) is within a selection range.
-fn in_selection(sel: &crate::app::TextSelection, row: u16, col: u16, cols: u16) -> bool {
-    let (sr, sc, er, ec) = if sel.start_row < sel.end_row
-        || (sel.start_row == sel.end_row && sel.start_col <= sel.end_col)
-    {
-        (sel.start_row, sel.start_col, sel.end_row, sel.end_col)
-    } else {
-        (sel.end_row, sel.end_col, sel.start_row, sel.start_col)
-    };
-    if row < sr || row > er {
-        return false;
-    }
-    let line_start = if row == sr { sc } else { 0 };
-    let line_end = if row == er {
-        ec
-    } else {
-        cols.saturating_sub(1)
-    };
-    col >= line_start && col <= line_end
-}
-
 /// Build ratatui Text directly from vt100 screen cells.
+/// `sel_col_min` and `sel_row_max` restrict where the selection highlight is
+/// drawn — used to exclude the editor gutter and status bar from highlighting.
 fn vt100_screen_to_text(
     screen: &vt100::Screen,
-    selection: Option<&crate::app::TextSelection>,
+    selection: Option<&crate::selection::SelectionState>,
+    sel_col_min: u16,
+    sel_row_max: u16,
 ) -> Text<'static> {
     let (rows, cols) = screen.size();
     let mut lines = Vec::with_capacity(rows as usize);
@@ -1071,10 +999,13 @@ fn vt100_screen_to_text(
                 style = style.add_modifier(Modifier::REVERSED);
             }
 
-            // Apply selection highlight
+            // Apply selection highlight, respecting content bounds
             if let Some(sel) = selection {
-                if in_selection(sel, row, col, cols) {
-                    style = style.bg(Color::Rgb(60, 80, 140));
+                if col >= sel_col_min
+                    && row < sel_row_max
+                    && sel.contains(row as usize, col as usize, cols as usize)
+                {
+                    style = style.bg(crate::selection::SELECTION_BG);
                 }
             }
 
@@ -1734,7 +1665,7 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
         let at_bottom = app.follow_mode || app.scroll_offset == 0;
 
         // Build ratatui Text directly from vt100 cell data
-        let text = vt100_screen_to_text(screen, app.selection.as_ref());
+        let text = vt100_screen_to_text(screen, if !app.selection_in_editor && app.selection.has_selection() { Some(&app.selection) } else { None }, 0, u16::MAX);
 
         let paragraph = Paragraph::new(text).block(block);
         frame.render_widget(paragraph, area);
@@ -1773,8 +1704,7 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
                         // If the cell already has REVERSED modifier, remove it
                         // before swapping — otherwise the double-inversion
                         // makes the cursor invisible on inverse text.
-                        let already_reversed =
-                            cell.modifier.contains(Modifier::REVERSED);
+                        let already_reversed = cell.modifier.contains(Modifier::REVERSED);
                         if already_reversed {
                             cell.modifier.remove(Modifier::REVERSED);
                         }
@@ -1964,7 +1894,7 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
 
         // Determine the primary status letter and color
         let (status_char, status_color) = match (index_status, worktree_status) {
-            ('?', '?') => ('U', Color::DarkGray),  // untracked — 'U' not '?'
+            ('?', '?') => ('U', Color::DarkGray), // untracked — 'U' not '?'
             ('A', _) | (_, 'A') => ('A', Color::Green),
             ('D', _) | (_, 'D') => ('D', Color::Red),
             ('R', _) => ('R', Color::Magenta),
@@ -1999,13 +1929,21 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
             ("", Color::Reset)
         };
         // icon has one trailing space; add second for breathing room
-        let icon_display = if app.icons { format!("{}  ", icon.trim_end()) } else { String::new() };
+        let icon_display = if app.icons {
+            format!("{}  ", icon.trim_end())
+        } else {
+            String::new()
+        };
         let icon_w = icon_display.width();
 
         // Layout: " [icon]  [basename] [dir]  [pad]  [+N] [-N] [S] "
         let prefix_w = 1usize;
         let basename_w = file_basename.width();
-        let dir_w = if file_dir.is_empty() { 0 } else { file_dir.width() + 1 };
+        let dir_w = if file_dir.is_empty() {
+            0
+        } else {
+            file_dir.width() + 1
+        };
         let suffix_w = added_str.width() + 1 + removed_str.width() + status_str.width() + 1;
         let used = prefix_w + icon_w + basename_w + dir_w + suffix_w + 1;
         let pad = inner_width.saturating_sub(used).max(1);
@@ -2028,7 +1966,9 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
         row_spans.push(Span::styled(removed_str, Style::default().fg(Color::Red)));
         row_spans.push(Span::styled(
             status_str,
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD),
         ));
         row_spans.push(Span::raw(" "));
         let is_sel = app.git_status_selected == Some(file_row_idx);
@@ -2129,7 +2069,9 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                     }
                     spans.push(Span::styled(
                         "\u{f444}", // nf-md-circle_small ●
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 }
                 _ => graph_str.push(ch),
@@ -2189,7 +2131,9 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                                     .bg(Color::Cyan)
                                     .add_modifier(Modifier::BOLD),
                             ));
-                        } else if ref_name.starts_with("origin/") || ref_name.starts_with("upstream/") {
+                        } else if ref_name.starts_with("origin/")
+                            || ref_name.starts_with("upstream/")
+                        {
                             spans.push(Span::styled(
                                 format!(" {} ", ref_name),
                                 Style::default()
@@ -2233,10 +2177,16 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                         }
                         spans.push(Span::styled(time_str, Style::default().fg(Color::DarkGray)));
                     } else {
-                        spans.push(Span::styled(after_dec.to_string(), Style::default().fg(Color::White)));
+                        spans.push(Span::styled(
+                            after_dec.to_string(),
+                            Style::default().fg(Color::White),
+                        ));
                     }
                 } else {
-                    spans.push(Span::styled(format!(" {}", remainder), Style::default().fg(Color::White)));
+                    spans.push(Span::styled(
+                        format!(" {}", remainder),
+                        Style::default().fg(Color::White),
+                    ));
                 }
             } else {
                 if let Some(time_start) = remainder.rfind('(') {
@@ -2256,7 +2206,10 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                     }
                     spans.push(Span::styled(time_str, Style::default().fg(Color::DarkGray)));
                 } else {
-                    spans.push(Span::styled(format!(" {}", remainder), Style::default().fg(Color::White)));
+                    spans.push(Span::styled(
+                        format!(" {}", remainder),
+                        Style::default().fg(Color::White),
+                    ));
                 }
             }
         }
@@ -2295,7 +2248,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                             'D' => ("D", Color::Red),
                             'R' => ("R", Color::Cyan),
                             'C' => ("C", Color::Cyan),
-                            _   => ("M", Color::Yellow),
+                            _ => ("M", Color::Yellow),
                         };
 
                         // Icon
@@ -2318,7 +2271,11 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                         // Layout: "    {icon}filename  rel_dir  ···  S"
                         let prefix_w = 4usize; // "    "
                         let filename_w = filename.width();
-                        let dir_w = if rel_dir.is_empty() { 0 } else { rel_dir.width() + 2 };
+                        let dir_w = if rel_dir.is_empty() {
+                            0
+                        } else {
+                            rel_dir.width() + 2
+                        };
                         let status_w = 1usize;
                         let fixed_w = prefix_w + icon_w + filename_w + dir_w + status_w + 2;
                         let pad = inner_width.saturating_sub(fixed_w);
@@ -2330,14 +2287,19 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                         ];
                         if !rel_dir.is_empty() {
                             fspans.push(Span::raw("  "));
-                            fspans.push(Span::styled(rel_dir.to_string(), Style::default().fg(Color::Rgb(110, 110, 130))));
+                            fspans.push(Span::styled(
+                                rel_dir.to_string(),
+                                Style::default().fg(Color::Rgb(110, 110, 130)),
+                            ));
                         }
                         if pad > 0 {
                             fspans.push(Span::raw(" ".repeat(pad)));
                         }
                         fspans.push(Span::styled(
                             status_char.to_string(),
-                            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(status_color)
+                                .add_modifier(Modifier::BOLD),
                         ));
 
                         let file_display_row = lines.len() + app.git_log_scroll as usize;
@@ -2348,7 +2310,10 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                             Line::from(fspans)
                         };
                         lines.push(file_line);
-                        row_map.push(GitLogRow::File { hash: hash.clone(), file_idx });
+                        row_map.push(GitLogRow::File {
+                            hash: hash.clone(),
+                            file_idx,
+                        });
                     }
                 }
             } else {
@@ -2386,7 +2351,14 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
         .scroll((app.git_log_scroll, 0));
     frame.render_widget(paragraph, area);
 
-    render_scrollbar(frame, area, is_narrow, app.git_log_scroll, max_scroll, is_focused);
+    render_scrollbar(
+        frame,
+        area,
+        is_narrow,
+        app.git_log_scroll,
+        max_scroll,
+        is_focused,
+    );
 }
 
 /// Truncate a string to fit within max_width, adding "..." if truncated.
@@ -2638,24 +2610,24 @@ fn draw_backdrop(frame: &mut Frame, area: Rect) {
 /// `Reset` fg is treated as the typical terminal default foreground (near-white).
 fn named_to_rgb_fg(c: Color) -> Color {
     match c {
-        Color::Reset        => Color::Rgb(204, 204, 204),
-        Color::Black        => Color::Rgb(0,   0,   0  ),
-        Color::Red          => Color::Rgb(170, 0,   0  ),
-        Color::Green        => Color::Rgb(0,   170, 0  ),
-        Color::Yellow       => Color::Rgb(170, 170, 0  ),
-        Color::Blue         => Color::Rgb(0,   0,   170),
-        Color::Magenta      => Color::Rgb(170, 0,   170),
-        Color::Cyan         => Color::Rgb(0,   170, 170),
-        Color::Gray         => Color::Rgb(170, 170, 170),
-        Color::DarkGray     => Color::Rgb(85,  85,  85 ),
-        Color::LightRed     => Color::Rgb(255, 85,  85 ),
-        Color::LightGreen   => Color::Rgb(85,  255, 85 ),
-        Color::LightYellow  => Color::Rgb(255, 255, 85 ),
-        Color::LightBlue    => Color::Rgb(85,  85,  255),
-        Color::LightMagenta => Color::Rgb(255, 85,  255),
-        Color::LightCyan    => Color::Rgb(85,  255, 255),
-        Color::White        => Color::Rgb(255, 255, 255),
-        other               => other,
+        Color::Reset => Color::Rgb(204, 204, 204),
+        Color::Black => Color::Rgb(0, 0, 0),
+        Color::Red => Color::Rgb(170, 0, 0),
+        Color::Green => Color::Rgb(0, 170, 0),
+        Color::Yellow => Color::Rgb(170, 170, 0),
+        Color::Blue => Color::Rgb(0, 0, 170),
+        Color::Magenta => Color::Rgb(170, 0, 170),
+        Color::Cyan => Color::Rgb(0, 170, 170),
+        Color::Gray => Color::Rgb(170, 170, 170),
+        Color::DarkGray => Color::Rgb(85, 85, 85),
+        Color::LightRed => Color::Rgb(255, 85, 85),
+        Color::LightGreen => Color::Rgb(85, 255, 85),
+        Color::LightYellow => Color::Rgb(255, 255, 85),
+        Color::LightBlue => Color::Rgb(85, 85, 255),
+        Color::LightMagenta => Color::Rgb(255, 85, 255),
+        Color::LightCyan => Color::Rgb(85, 255, 255),
+        Color::White => Color::Rgb(255, 255, 255),
+        other => other,
     }
 }
 
@@ -2664,7 +2636,7 @@ fn named_to_rgb_fg(c: Color) -> Color {
 fn named_to_rgb_bg(c: Color) -> Color {
     match c {
         Color::Reset => Color::Rgb(18, 18, 18),
-        other        => named_to_rgb_fg(other),
+        other => named_to_rgb_fg(other),
     }
 }
 
@@ -2674,7 +2646,7 @@ fn named_to_rgb_bg(c: Color) -> Color {
 fn blend_black(c: Color) -> Color {
     match c {
         Color::Rgb(r, g, b) => Color::Rgb(r / 2, g / 2, b / 2),
-        other               => other,
+        other => other,
     }
 }
 
@@ -2728,7 +2700,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
         .border_style(Style::default().fg(FOCUSED_BORDER))
         .title(Span::styled(
             " Settings ",
-            Style::default().fg(FOCUSED_BORDER).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(FOCUSED_BORDER)
+                .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(Color::Rgb(20, 20, 30)));
     let inner = block.inner(dialog_area);
@@ -2746,11 +2720,11 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // Rows: label + value string (theme row handled specially below)
     let field_values: [(&str, &str); ROWS] = [
-        ("Shell Command",  &app.config.command),
+        ("Shell Command", &app.config.command),
         ("Editor Command", &app.config.editor_command),
-        ("Projects Dir",   &app.config.projects_dir),
-        ("Icons",          if app.config.icons { "on" } else { "off" }),
-        ("Editor Theme",   theme_display),
+        ("Projects Dir", &app.config.projects_dir),
+        ("Icons", if app.config.icons { "on" } else { "off" }),
+        ("Editor Theme", theme_display),
     ];
 
     let dim = Style::default().fg(Color::Rgb(100, 100, 100));
@@ -2758,12 +2732,21 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
 
     for (i, (label, value)) in field_values.iter().enumerate() {
         let row_y = inner.y + 1 + i as u16;
-        if row_y >= inner.y + inner.height { break; }
+        if row_y >= inner.y + inner.height {
+            break;
+        }
 
         let is_selected = i == app.settings_row;
-        let row_bg = if is_selected { active_bg } else { Color::Rgb(20, 20, 30) };
+        let row_bg = if is_selected {
+            active_bg
+        } else {
+            Color::Rgb(20, 20, 30)
+        };
         let label_style = if is_selected {
-            Style::default().fg(Color::Cyan).bg(row_bg).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(row_bg)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Rgb(160, 160, 160)).bg(row_bg)
         };
@@ -2778,7 +2761,9 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
         if i == 4 {
             // Theme row: show ◀ name ▶ selector
             let theme_names: Vec<&str> = crate::app::App::EDITOR_THEMES
-                .iter().map(|(_, n)| *n).collect();
+                .iter()
+                .map(|(_, n)| *n)
+                .collect();
             let cur_idx = crate::app::App::EDITOR_THEMES
                 .iter()
                 .position(|(id, _)| *id == app.config.editor_theme.as_str())
@@ -2789,7 +2774,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
             let (arrow_style, name_style, hint_style) = if is_selected {
                 (
                     Style::default().fg(Color::Cyan).bg(row_bg),
-                    Style::default().fg(Color::White).bg(row_bg).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(row_bg)
+                        .add_modifier(Modifier::BOLD),
                     Style::default().fg(Color::Rgb(120, 120, 140)).bg(row_bg),
                 )
             } else {
@@ -2827,7 +2815,10 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
                 value.to_string()
             };
             let truncated = if value_str.len() > value_w as usize {
-                format!("…{}", &value_str[value_str.len().saturating_sub(value_w as usize - 1)..])
+                format!(
+                    "…{}",
+                    &value_str[value_str.len().saturating_sub(value_w as usize - 1)..]
+                )
             } else {
                 value_str
             };
@@ -2963,7 +2954,11 @@ fn draw_command_palette(frame: &mut Frame, app: &mut App, area: Rect) {
         let prefix = if is_sel { " > " } else { "   " };
         let prefix_w = prefix.width();
         // +1 for the extra space added when rendering
-        let icon_w = if icon_prefix.is_empty() { 0 } else { icon_prefix.trim_end().width() + 2 };
+        let icon_w = if icon_prefix.is_empty() {
+            0
+        } else {
+            icon_prefix.trim_end().width() + 2
+        };
         let label_w = item.label.width();
         let kind_w = kind_str.width();
 
@@ -2975,13 +2970,27 @@ fn draw_command_palette(frame: &mut Frame, app: &mut App, area: Rect) {
         if !icon_prefix.is_empty() {
             // icon already has one trailing space; add second for breathing room
             let icon_display = format!("{} ", icon_prefix.trim_end());
-            spans.push(Span::styled(icon_display, Style::default().fg(icon_color).bg(bg)));
+            spans.push(Span::styled(
+                icon_display,
+                Style::default().fg(icon_color).bg(bg),
+            ));
         }
-        let label_fg = if is_sel { Color::White } else { Color::Rgb(200, 200, 200) };
-        let label_modifier = if is_sel { Modifier::BOLD } else { Modifier::empty() };
+        let label_fg = if is_sel {
+            Color::White
+        } else {
+            Color::Rgb(200, 200, 200)
+        };
+        let label_modifier = if is_sel {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        };
         spans.push(Span::styled(
             &item.label,
-            Style::default().fg(label_fg).bg(bg).add_modifier(label_modifier),
+            Style::default()
+                .fg(label_fg)
+                .bg(bg)
+                .add_modifier(label_modifier),
         ));
 
         // Show subtitle (file path) in dim
@@ -3104,7 +3113,7 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                     Some('A') => Color::Green,
                     Some('M') => Color::Yellow,
                     Some('D') => Color::Red,
-                    Some('?') => Color::DarkGray,
+                    Some('?') => Color::Rgb(180, 180, 180),
                     _ => {
                         if entry.is_dir {
                             Color::Rgb(200, 200, 200)
@@ -3124,6 +3133,18 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                 Color::Reset
             };
 
+            // In NF icon mode, show ▾/▸ chevron before directory icons and
+            // two spaces before file icons so both columns stay aligned.
+            let chevron_prefix = if app.icons {
+                if entry.is_dir {
+                    if entry.expanded { "▾ " } else { "▸ " }
+                } else {
+                    "  "
+                }
+            } else {
+                ""
+            };
+
             let has_bg = row_bg != Color::Reset;
             let mut spans = vec![
                 // indent prefix (dim)
@@ -3133,6 +3154,15 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                         Style::default().fg(Color::Rgb(60, 60, 60)).bg(row_bg)
                     } else {
                         Style::default().fg(Color::Rgb(60, 60, 60))
+                    },
+                ),
+                // chevron (dirs only in NF mode) — dim color
+                Span::styled(
+                    chevron_prefix.to_string(),
+                    if has_bg {
+                        Style::default().fg(Color::Rgb(120, 120, 140)).bg(row_bg)
+                    } else {
+                        Style::default().fg(Color::Rgb(120, 120, 140))
                     },
                 ),
                 // icon (brand color) — two trailing spaces for breathing room
@@ -3161,15 +3191,19 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
                 }),
             ];
 
-            // Calculate used width so far (icon gets two spaces, matching the rendered span)
-            let prefix_str = format!(" {}{}  ", indent, icon.trim_end());
+            // Calculate used width so far (indent + chevron + icon + two spaces)
+            let prefix_str = format!(" {}{}{}  ", indent, chevron_prefix, icon.trim_end());
             let prefix_w = prefix_str.width();
             let name_w = entry.name.width();
 
             // Right-side indicators (symlink + git status)
             // Symlink icon "󱞩" (NF link icon) — 2 chars wide + 1 space gap
             let symlink_indicator = "\u{F17A9}"; // 󱞩  nf-md-link_variant
-            let symlink_display = if entry.is_symlink { format!(" {}", symlink_indicator) } else { String::new() };
+            let symlink_display = if entry.is_symlink {
+                format!(" {}", symlink_indicator)
+            } else {
+                String::new()
+            };
             let symlink_w = symlink_display.width();
 
             // Git status indicator on the right
@@ -3190,7 +3224,11 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
             let pad = inner_width.saturating_sub(used_w);
             spans.push(Span::styled(
                 " ".repeat(pad),
-                if has_bg { Style::default().bg(row_bg) } else { Style::default() },
+                if has_bg {
+                    Style::default().bg(row_bg)
+                } else {
+                    Style::default()
+                },
             ));
 
             // Symlink icon, right-aligned before git status
@@ -3311,8 +3349,16 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file");
-        let title_color = if is_focused { FOCUSED_BORDER } else { UNFOCUSED_BORDER };
-        let title_modifier = if is_focused { Modifier::BOLD } else { Modifier::empty() };
+        let title_color = if is_focused {
+            FOCUSED_BORDER
+        } else {
+            UNFOCUSED_BORDER
+        };
+        let title_modifier = if is_focused {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        };
         if app.icons {
             let icon = nf_entry_icon(name, false, false);
             let icon_color = nf_entry_icon_color(name, false);
@@ -3321,17 +3367,25 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
                 Span::styled(icon, Style::default().fg(icon_color)),
                 Span::styled(
                     format!("{} ", name),
-                    Style::default().fg(title_color).add_modifier(title_modifier),
+                    Style::default()
+                        .fg(title_color)
+                        .add_modifier(title_modifier),
                 ),
             ])
         } else {
             RatatuiLine::from(Span::styled(
                 format!(" {} ", name),
-                Style::default().fg(title_color).add_modifier(title_modifier),
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(title_modifier),
             ))
         }
     } else {
-        let title_color = if is_focused { FOCUSED_BORDER } else { UNFOCUSED_BORDER };
+        let title_color = if is_focused {
+            FOCUSED_BORDER
+        } else {
+            UNFOCUSED_BORDER
+        };
         RatatuiLine::from(Span::styled(" File ", Style::default().fg(title_color)))
     };
 
@@ -3341,7 +3395,11 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
             .border_style(Style::default().fg(Color::Rgb(60, 60, 60)))
             .title(title_line)
     } else {
-        let border_color = if is_focused { FOCUSED_BORDER } else { UNFOCUSED_BORDER };
+        let border_color = if is_focused {
+            FOCUSED_BORDER
+        } else {
+            UNFOCUSED_BORDER
+        };
         Block::default()
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
@@ -3355,8 +3413,13 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
     // Read scroll state reported by aide-editor (parsed from OSC title in EditorPane::drain)
     let (editor_scroll, editor_total, editor_view_h, editor_scroll_col, editor_max_col) =
         if let Some(ep) = &app.editor_pane {
-            (ep.editor_scroll, ep.editor_total, ep.editor_view_h,
-             ep.editor_scroll_col, ep.editor_max_col)
+            (
+                ep.editor_scroll,
+                ep.editor_total,
+                ep.editor_view_h,
+                ep.editor_scroll_col,
+                ep.editor_max_col,
+            )
         } else {
             (0u64, 1u64, inner.height as u64, 0u64, 0u64)
         };
@@ -3364,7 +3427,12 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
     let show_scrollbar = app.editor_pane.is_some() && editor_total > editor_view_h;
     // Reserve 1 column on the right for the scrollbar when it will be shown
     let scrollbar_w: u16 = if show_scrollbar { 1 } else { 0 };
-    let content_area = Rect::new(inner.x, inner.y, inner.width.saturating_sub(scrollbar_w), inner.height);
+    let content_area = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width.saturating_sub(scrollbar_w),
+        inner.height,
+    );
 
     // Store dimensions and content area so the event loop knows where to forward clicks
     app.editor_pane_rows = content_area.height;
@@ -3380,7 +3448,8 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
                 screen.set_size(content_area.height, content_area.width);
             }
         }
-        let text = vt100_screen_to_text(ep.parser.screen_mut(), None);
+        // aide-editor renders its own selection highlight in its vt100 output
+        let text = vt100_screen_to_text(ep.parser.screen_mut(), None, 0, u16::MAX);
         frame.render_widget(Paragraph::new(text), content_area);
 
         // Forward the cursor position to ratatui so it appears in the right spot
@@ -3389,7 +3458,8 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
             let (crow, ccol) = screen.cursor_position();
             let cx = content_area.x + ccol;
             let cy = content_area.y + crow;
-            if cx < content_area.x + content_area.width && cy < content_area.y + content_area.height {
+            if cx < content_area.x + content_area.width && cy < content_area.y + content_area.height
+            {
                 let buf = frame.buffer_mut();
                 if let Some(cell) = buf.cell_mut((cx, cy)) {
                     if is_focused {
@@ -3409,7 +3479,14 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
         // Vertical scrollbar on the right edge
         if show_scrollbar {
             let max_scroll = editor_total.saturating_sub(editor_view_h) as u16;
-            render_scrollbar(frame, area, is_narrow, editor_scroll as u16, max_scroll, is_focused);
+            render_scrollbar(
+                frame,
+                area,
+                is_narrow,
+                editor_scroll as u16,
+                max_scroll,
+                is_focused,
+            );
         }
 
         // Horizontal scrollbar overlaid on the bottom border
@@ -3418,15 +3495,18 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
         let h_max_scroll = editor_max_col.saturating_sub(h_visible);
         if h_max_scroll > 0 {
             render_horizontal_scrollbar(
-                frame, area, is_narrow,
-                editor_scroll_col as u16, h_max_scroll as u16, is_focused,
+                frame,
+                area,
+                is_narrow,
+                editor_scroll_col as u16,
+                h_max_scroll as u16,
+                is_focused,
             );
         }
     } else {
-        let placeholder = Paragraph::new(" No file open — use the file browser or Ctrl+P to open a file")
-            .style(Style::default().fg(Color::Rgb(80, 80, 80)));
+        let placeholder =
+            Paragraph::new(" No file open — use the file browser or Ctrl+P to open a file")
+                .style(Style::default().fg(Color::Rgb(80, 80, 80)));
         frame.render_widget(placeholder, content_area);
     }
 }
-
-

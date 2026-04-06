@@ -6,6 +6,7 @@ mod git;
 mod input;
 mod protocol;
 mod pty_backend;
+mod selection;
 mod sessions;
 mod ui;
 
@@ -234,7 +235,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         app.poll_bg_jobs();
 
         // --- Input (non-blocking: Duration::ZERO) ---
-        let picker_mode = app.show_picker || app.show_close_confirm || app.show_command_palette
+        let picker_mode = app.show_picker
+            || app.show_close_confirm
+            || app.show_command_palette
             || app.show_settings;
         let actions = input::drain_actions(Duration::ZERO, picker_mode);
         if !actions.is_empty() {
@@ -245,6 +248,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         // then send as a single write to avoid the shell processing
         // partial input with intermediate redraws.
         let mut pty_buf: Vec<u8> = Vec::new();
+
+        let prev_focus = app.focus;
 
         for action in actions {
             // Clear error message on any user action
@@ -263,7 +268,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         | Action::EscapeKey
                         | Action::CopySelection
                 ) {
-                    app.selection = None;
+                    app.selection.clear();
                 }
             }
 
@@ -605,8 +610,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                 }
                 Action::EscapeKey => {
                     // If there's an active selection, Esc clears it
-                    if app.selection.is_some() {
-                        app.selection = None;
+                    if app.selection.has_selection() {
+                        app.selection.clear();
                     } else if app.focus == app::FocusPanel::Output {
                         if app.session_manager.active_session().is_some() {
                             pty_buf.push(0x1b);
@@ -835,20 +840,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         // Only forward if within the editor content area (not aide's scrollbar column)
                         let ca = app.file_viewer_content_area;
                         if ca.width > 0
-                            && mx >= ca.x && mx < ca.x + ca.width
-                            && my >= ca.y && my < ca.y + ca.height
+                            && mx >= ca.x
+                            && mx < ca.x + ca.width
+                            && my >= ca.y
+                            && my < ca.y + ca.height
                         {
                             if let Some(ep) = &mut app.editor_pane {
-                                // 1-based col/row within the editor's PTY viewport
                                 let rel_col = mx.saturating_sub(ca.x) + 1;
                                 let rel_row = my.saturating_sub(ca.y) + 1;
-                                // SGR press then release
-                                let seq = format!(
-                                    "\x1b[<0;{};{}M\x1b[<0;{};{}m",
-                                    rel_col, rel_row, rel_col, rel_row
-                                );
+                                let seq = format!("\x1b[<0;{};{}M", rel_col, rel_row);
                                 ep.write_input(seq.as_bytes());
                             }
+                            app.focus = app::FocusPanel::FileViewer;
+                            app.selection_in_editor = true;
+                            app.selection.clear();
                         }
                     } else if app.output_area.width > 0
                         && my >= app.output_area.y
@@ -857,17 +862,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         && mx < app.output_area.x + app.output_area.width
                     {
                         app.focus = app::FocusPanel::Output;
-                        // Start text selection
+                        app.selection_in_editor = false;
                         let border = if app.is_narrow { 0 } else { 1 };
                         let rel_col = mx.saturating_sub(app.output_area.x + border);
                         let rel_row = my.saturating_sub(app.output_area.y + border);
-                        app.selection = Some(app::TextSelection {
-                            start_col: rel_col,
-                            start_row: rel_row,
-                            end_col: rel_col,
-                            end_row: rel_row,
-                            active: true,
-                        });
+                        app.selection.mouse_down(rel_row as usize, rel_col as usize);
                     } else if app.git_status_area.width > 0
                         && my >= app.git_status_area.y
                         && my < app.git_status_area.y + app.git_status_area.height
@@ -884,13 +883,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         let mut row_counter: u16 = 0;
                         let mut clicked_path: Option<String> = None;
                         for line in app.git_status.lines() {
-                            if line.starts_with("##") || line.trim().is_empty() { continue; }
-                            if row_counter + 2 == click_row { // +2 for branch header + blank line
+                            if line.starts_with("##") || line.trim().is_empty() {
+                                continue;
+                            }
+                            if row_counter + 2 == click_row {
+                                // +2 for branch header + blank line
                                 // Parse path from git status line: "XY path" or "XY old -> new"
                                 let bare = if line.len() > 3 { &line[3..] } else { "" };
                                 let path = if let Some(arrow) = bare.find(" -> ") {
                                     &bare[arrow + 4..]
-                                } else { bare };
+                                } else {
+                                    bare
+                                };
                                 clicked_path = Some(path.trim().to_string());
                                 app.git_status_selected = Some(visible_idx);
                                 break;
@@ -901,9 +905,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         // Double-click: open the file
                         if let Some(path) = clicked_path {
                             let now = std::time::Instant::now();
-                            let is_double = app.last_git_status_click
+                            let is_double = app
+                                .last_git_status_click
                                 .as_ref()
-                                .map(|(idx, t)| *idx == visible_idx.saturating_sub(1) && t.elapsed().as_millis() < 500)
+                                .map(|(idx, t)| {
+                                    *idx == visible_idx.saturating_sub(1)
+                                        && t.elapsed().as_millis() < 500
+                                })
                                 .unwrap_or(false);
                             if is_double {
                                 if let Some(session) = app.session_manager.active_session() {
@@ -917,7 +925,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                                 }
                                 app.last_git_status_click = None;
                             } else {
-                                app.last_git_status_click = Some((visible_idx.saturating_sub(1), now));
+                                app.last_git_status_click =
+                                    Some((visible_idx.saturating_sub(1), now));
                             }
                         }
                     } else if app.git_log_area.width > 0
@@ -930,27 +939,48 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         // Determine which display row was clicked
                         let border_top: u16 = 1;
                         let display_row = (my.saturating_sub(app.git_log_area.y + border_top)
-                            + app.git_log_scroll) as usize;
+                            + app.git_log_scroll)
+                            as usize;
                         match app.git_log_rows.get(display_row).cloned() {
                             Some(app::GitLogRow::Commit(hash)) => {
-                                // Single click always toggles expand for commits
+                                // Double-click required to expand/collapse a commit
                                 app.git_log_selected_row = Some(display_row);
-                                app.toggle_commit_expand(&hash);
-                                app.last_git_log_click = None;
+                                let now = std::time::Instant::now();
+                                let is_double = app
+                                    .last_git_log_click
+                                    .as_ref()
+                                    .map(|(row, t)| {
+                                        *row == display_row && t.elapsed().as_millis() < 500
+                                    })
+                                    .unwrap_or(false);
+                                if is_double {
+                                    app.toggle_commit_expand(&hash);
+                                    app.last_git_log_click = None;
+                                } else {
+                                    app.last_git_log_click = Some((display_row, now));
+                                }
                             }
                             Some(app::GitLogRow::File { hash, file_idx }) => {
                                 // Double-click required to open a file
                                 app.git_log_selected_row = Some(display_row);
                                 let now = std::time::Instant::now();
-                                let is_double = app.last_git_log_click
+                                let is_double = app
+                                    .last_git_log_click
                                     .as_ref()
-                                    .map(|(row, t)| *row == display_row && t.elapsed().as_millis() < 500)
+                                    .map(|(row, t)| {
+                                        *row == display_row && t.elapsed().as_millis() < 500
+                                    })
                                     .unwrap_or(false);
                                 if is_double {
                                     if let Some(files) = app.commit_files.get(&hash) {
                                         if let Some(file) = files.get(file_idx) {
-                                            if let Some(session) = app.session_manager.active_session() {
-                                                let dir = session.directory.trim_end_matches('/').to_string();
+                                            if let Some(session) =
+                                                app.session_manager.active_session()
+                                            {
+                                                let dir = session
+                                                    .directory
+                                                    .trim_end_matches('/')
+                                                    .to_string();
                                                 let full = format!("{}/{}", dir, file.path);
                                                 if !std::path::Path::new(&full).is_dir() {
                                                     app.open_file(&full);
@@ -970,55 +1000,87 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                 }
                 Action::MouseDrag(mx, my) => {
-                    // Forward drag to file viewer for text selection in aide-editor
                     let ca = app.file_viewer_content_area;
                     if ca.width > 0
-                        && mx >= ca.x && mx < ca.x + ca.width
-                        && my >= ca.y && my < ca.y + ca.height
+                        && app.editor_pane.is_some()
+                        && mx >= ca.x
+                        && mx < ca.x + ca.width
+                        && my >= ca.y
+                        && my < ca.y + ca.height
                     {
+                        // Forward drag to aide-editor — it handles its own selection
                         if let Some(ep) = &mut app.editor_pane {
                             let rel_col = mx.saturating_sub(ca.x) + 1;
                             let rel_row = my.saturating_sub(ca.y) + 1;
-                            // SGR button-motion: button 32 = left drag
                             let seq = format!("\x1b[<32;{};{}M", rel_col, rel_row);
                             ep.write_input(seq.as_bytes());
                         }
-                    }
-                    if let Some(ref mut sel) = app.selection {
-                        if sel.active {
-                            let border = if app.is_narrow { 0 } else { 1 };
-                            sel.end_col = mx.saturating_sub(app.output_area.x + border);
-                            sel.end_row = my.saturating_sub(app.output_area.y + border);
-                        }
+                    } else if app.selection.dragging {
+                        let border = if app.is_narrow { 0 } else { 1 };
+                        let rel_col = mx.saturating_sub(app.output_area.x + border);
+                        let rel_row = my.saturating_sub(app.output_area.y + border);
+                        app.selection.mouse_drag(rel_row as usize, rel_col as usize);
                     }
                 }
-                Action::MouseRelease(_mx, _my) => {
-                    // Discard if no actual drag happened (single click), otherwise deactivate
-                    match &app.selection {
-                        Some(sel)
-                            if sel.start_col == sel.end_col && sel.start_row == sel.end_row =>
-                        {
-                            app.selection = None;
+                Action::MouseRelease(mx, my) => {
+                    let ca = app.file_viewer_content_area;
+                    let (rel_row, rel_col) = if ca.width > 0
+                        && app.editor_pane.is_some()
+                        && mx >= ca.x
+                        && mx < ca.x + ca.width
+                        && my >= ca.y
+                        && my < ca.y + ca.height
+                    {
+                        // Forward release to aide-editor for cursor completion
+                        let sgr_col = mx.saturating_sub(ca.x) + 1;
+                        let sgr_row = my.saturating_sub(ca.y) + 1;
+                        if let Some(ep) = &mut app.editor_pane {
+                            let seq = format!("\x1b[<0;{};{}m", sgr_col, sgr_row);
+                            ep.write_input(seq.as_bytes());
                         }
-                        Some(_) => {
-                            app.selection.as_mut().unwrap().active = false;
-                        }
-                        None => {}
-                    }
+                        (my.saturating_sub(ca.y), mx.saturating_sub(ca.x))
+                    } else {
+                        let border = if app.is_narrow { 0 } else { 1 };
+                        (
+                            my.saturating_sub(app.output_area.y + border),
+                            mx.saturating_sub(app.output_area.x + border),
+                        )
+                    };
+                    app.selection.mouse_up(rel_row as usize, rel_col as usize);
                 }
                 Action::CopySelection => {
-                    if let Some(ref sel) = app.selection {
-                        if let Some(parser) = &app.pty_parser {
-                            let text = extract_selection(parser.screen(), sel);
-                            if !text.is_empty() {
-                                copy_to_clipboard(&text);
+                    if app.selection_in_editor {
+                        // aide-editor reports its selection via OSC 7734 — use that text directly
+                        if let Some(ref ep) = app.editor_pane {
+                            if let Some(ref text) = ep.editor_selected_text {
+                                if !text.is_empty() {
+                                    selection::copy_to_clipboard(text);
+                                }
                             }
                         }
+                    } else if app.selection.has_selection() {
+                        if let Some(ref parser) = app.pty_parser {
+                            let text = extract_selection(parser.screen(), &app.selection);
+                            if !text.is_empty() {
+                                selection::copy_to_clipboard(&text);
+                            }
+                        }
+                        app.selection.clear();
                     }
-                    app.selection = None;
                 }
                 Action::None => {}
                 _ => {}
+            }
+        }
+
+        // Send focus events to aide-editor when focus changes to/from FileViewer
+        if let Some(ep) = &mut app.editor_pane {
+            let was_editor = prev_focus == app::FocusPanel::FileViewer;
+            let is_editor = app.focus == app::FocusPanel::FileViewer;
+            if !was_editor && is_editor {
+                ep.write_input(b"\x1b[I"); // focus gained
+            } else if was_editor && !is_editor {
+                ep.write_input(b"\x1b[O"); // focus lost
             }
         }
 
@@ -1038,6 +1100,24 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
             // Track terminal size (only needed before draw)
             let current_size = terminal.size().unwrap_or_default();
             app.is_narrow = current_size.width < 100;
+
+            // Update window title: "workspace - aide"
+            {
+                use std::io::Write as _;
+                let workspace = app
+                    .session_manager
+                    .active_session()
+                    .and_then(|s| {
+                        std::path::Path::new(&s.directory)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|n| n.to_string())
+                    })
+                    .unwrap_or_else(|| "aide".to_string());
+                let title = format!("{} - aide", workspace);
+                let _ = write!(io::stdout(), "\x1b]2;{}\x07", title);
+                let _ = io::stdout().flush();
+            }
 
             terminal.draw(|frame| ui::draw(frame, &mut app))?;
             dirty = false;
@@ -1172,27 +1252,19 @@ fn scroll_target(app: &App, mx: u16, my: u16) -> ScrollPanel {
 /// Extract text from file content within the selection bounds.
 /// Selection coordinates use absolute line indices and character offsets.
 /// Extract text from vt100 screen within the selection bounds.
-fn extract_selection(screen: &vt100::Screen, sel: &app::TextSelection) -> String {
+fn extract_selection(screen: &vt100::Screen, sel: &selection::SelectionState) -> String {
     let (rows, cols) = screen.size();
-    // Normalize start/end so start <= end
-    let (sr, sc, er, ec) = if sel.start_row < sel.end_row
-        || (sel.start_row == sel.end_row && sel.start_col <= sel.end_col)
-    {
-        (sel.start_row, sel.start_col, sel.end_row, sel.end_col)
-    } else {
-        (sel.end_row, sel.end_col, sel.start_row, sel.start_col)
+    let (sr, sc, er, ec) = match sel.bounds() {
+        Some(b) => b,
+        None => return String::new(),
     };
 
     let mut result = String::new();
-    for row in sr..=er.min(rows.saturating_sub(1)) {
+    for row in sr..=er.min(rows.saturating_sub(1) as usize) {
         let col_start = if row == sr { sc } else { 0 };
-        let col_end = if row == er {
-            ec
-        } else {
-            cols.saturating_sub(1)
-        };
-        for col in col_start..=col_end.min(cols.saturating_sub(1)) {
-            if let Some(cell) = screen.cell(row, col) {
+        let col_end = if row == er { ec } else { cols.saturating_sub(1) as usize };
+        for col in col_start..=col_end.min(cols.saturating_sub(1) as usize) {
+            if let Some(cell) = screen.cell(row as u16, col as u16) {
                 if cell.is_wide_continuation() {
                     continue;
                 }
@@ -1204,7 +1276,6 @@ fn extract_selection(screen: &vt100::Screen, sel: &app::TextSelection) -> String
                 }
             }
         }
-        // Trim trailing spaces from each line
         let trimmed_len = result.trim_end_matches(' ').len();
         result.truncate(trimmed_len);
         if row < er {
@@ -1212,15 +1283,6 @@ fn extract_selection(screen: &vt100::Screen, sel: &app::TextSelection) -> String
         }
     }
     result
-}
-
-/// Copy text to the system clipboard using OSC 52 escape sequence.
-fn copy_to_clipboard(text: &str) {
-    use std::io::Write;
-    let encoded = base64_encode(text.as_bytes());
-    let osc = format!("\x1b]52;c;{}\x07", encoded);
-    let _ = io::stdout().write_all(osc.as_bytes());
-    let _ = io::stdout().flush();
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -1271,9 +1333,9 @@ fn refresh_output(app: &mut App) -> bool {
         app.pty_session_id = session_id;
         app.pty_last_len = new_offset;
         app.pty_last_scrollback = 0; // reset so the shrank-check doesn't false-fire
-        // Force a PTY resize to send SIGWINCH, causing the program to redraw
-        // at the correct dimensions. Also force a full terminal repaint so
-        // ratatui doesn't diff against a stale frame buffer.
+                                     // Force a PTY resize to send SIGWINCH, causing the program to redraw
+                                     // at the correct dimensions. Also force a full terminal repaint so
+                                     // ratatui doesn't diff against a stale frame buffer.
         app.needs_pty_resize = true;
         app.needs_full_repaint = true;
         return true;
@@ -1298,7 +1360,7 @@ fn refresh_output(app: &mut App) -> bool {
             app.pty_parser = Some(parser);
             app.pty_last_len = full_offset;
             app.pty_last_scrollback = 0; // reset so the shrank-check doesn't false-fire
-            // Buffer was truncated — snap to bottom and force repaint
+                                         // Buffer was truncated — snap to bottom and force repaint
             app.scroll_offset = 0;
             app.follow_mode = true;
             app.needs_full_repaint = true;
