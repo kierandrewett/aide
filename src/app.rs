@@ -784,6 +784,17 @@ impl App {
         self.settings_buf.clear();
     }
 
+    /// Available cursor shapes in cycle order: (config_value, display_name).
+    pub const CURSOR_SHAPES: &'static [(&'static str, &'static str)] = &[
+        ("default", "Default"),
+        ("block", "Block"),
+        ("blinking_block", "Block (blink)"),
+        ("underline", "Underline"),
+        ("blinking_underline", "Underline (blink)"),
+        ("bar", "Bar"),
+        ("blinking_bar", "Bar (blink)"),
+    ];
+
     /// Available editor themes in cycle order.
     pub const EDITOR_THEMES: &'static [(&'static str, &'static str)] = &[
         ("github-dark", "GitHub Dark"),
@@ -817,6 +828,10 @@ impl App {
                     // Cycle theme forward (Enter = next)
                     self.cycle_theme(1);
                 }
+                5 => {
+                    // Cycle cursor shape forward (Enter = next)
+                    self.cycle_cursor_shape(1);
+                }
                 _ => {
                     // Enter edit mode for string fields
                     self.settings_editing = true;
@@ -829,6 +844,17 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Cycle the cursor shape by `delta` (+1 = next, -1 = prev).
+    pub fn cycle_cursor_shape(&mut self, delta: i32) {
+        let shapes = Self::CURSOR_SHAPES;
+        let cur = shapes
+            .iter()
+            .position(|(id, _)| *id == self.config.cursor_shape)
+            .unwrap_or(0) as i32;
+        let next = ((cur + delta).rem_euclid(shapes.len() as i32)) as usize;
+        self.config.cursor_shape = shapes[next].0.to_string();
     }
 
     /// Cycle the editor theme by `delta` (+1 = next, -1 = prev).
@@ -898,7 +924,7 @@ impl App {
         let cols = self.editor_pane_cols.max(20);
         let cmd = resolve_editor_command(&self.editor_command);
 
-        match EditorPane::spawn(&cmd, path, rows, cols, &self.config.editor_theme) {
+        match EditorPane::spawn(&cmd, path, rows, cols, &self.config.editor_theme, &self.config.cursor_shape) {
             Ok(pane) => {
                 self.editor_pane = Some(pane);
                 self.viewing_file = Some(path.to_string());

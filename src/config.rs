@@ -19,6 +19,10 @@ pub struct Config {
     /// Syntax highlighting theme for aide-editor.
     /// Options: "github-dark", "one-dark", "dracula", "nord", "monokai", "solarized-dark"
     pub editor_theme: String,
+    /// Cursor shape. Options: "block", "underline", "bar" (alias "line").
+    /// Prefix with "blinking_" for a blinking variant, e.g. "blinking_bar".
+    /// Use "default" to leave the terminal's configured cursor unchanged.
+    pub cursor_shape: String,
 }
 
 impl Default for Config {
@@ -29,7 +33,22 @@ impl Default for Config {
             editor_command: "aide-editor".to_string(),
             icons: true,
             editor_theme: "github-dark".to_string(),
+            cursor_shape: "default".to_string(),
         }
+    }
+}
+
+/// Parse a cursor_shape string into a crossterm `SetCursorStyle`.
+pub fn parse_cursor_style(s: &str) -> crossterm::cursor::SetCursorStyle {
+    use crossterm::cursor::SetCursorStyle::*;
+    match s.trim().to_lowercase().as_str() {
+        "block" | "steady_block" => SteadyBlock,
+        "blinking_block" => BlinkingBlock,
+        "underline" | "underscore" | "steady_underline" => SteadyUnderScore,
+        "blinking_underline" | "blinking_underscore" => BlinkingUnderScore,
+        "bar" | "line" | "steady_bar" | "steady_line" => SteadyBar,
+        "blinking_bar" | "blinking_line" => BlinkingBar,
+        _ => DefaultUserShape,
     }
 }
 

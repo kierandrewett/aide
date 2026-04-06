@@ -1533,6 +1533,14 @@ impl Editor {
                 } else {
                     0
                 };
+                let total_lines = self.line_count();
+                let cursor_track_pos = ((self.cursor_row as f64 / total_lines as f64)
+                    * track_h as f64) as usize;
+                let sel_track_v = self.selection.bounds().map(|(sr, _, er, _)| {
+                    let s = ((sr as f64 / total_lines as f64) * track_h as f64) as usize;
+                    let e = ((er as f64 / total_lines as f64) * track_h as f64) as usize;
+                    (s, e)
+                });
                 let buf = frame.buffer_mut();
                 let bar_x = vscroll_area.x;
                 for i in 0..track_h {
@@ -1541,7 +1549,11 @@ impl Editor {
                         break;
                     }
                     let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
-                    let (ch, fg) = if is_thumb {
+                    let highlighted = i == cursor_track_pos
+                        || sel_track_v.map(|(s, e)| i >= s && i <= e).unwrap_or(false);
+                    let (ch, fg) = if highlighted {
+                        ("│", Color::Rgb(220, 180, 60))
+                    } else if is_thumb {
                         ("┃", Color::Rgb(100, 100, 180))
                     } else {
                         ("│", Color::Rgb(45, 45, 65))
@@ -1558,8 +1570,8 @@ impl Editor {
         let max_w = self.max_line_width();
         let h_scrollable = max_w.saturating_sub(text_w as usize);
         let sep_fg = Color::Rgb(55, 55, 75);
-        // Draw the separator as a line of ─ chars
-        let sep_line = "\u{2500}".repeat(size.width as usize);
+        // Draw the separator as a line of ━ chars (heavy horizontal)
+        let sep_line = "\u{2501}".repeat(size.width as usize);
         frame.render_widget(
             Paragraph::new(sep_line).style(Style::default().fg(sep_fg)),
             sep_area,
@@ -1577,6 +1589,14 @@ impl Editor {
             } else {
                 0
             };
+            let total_cols = h_scrollable + track_w;
+            let cursor_track_col =
+                ((self.cursor_col as f64 / total_cols as f64) * track_w as f64) as usize;
+            let sel_track_h = self.selection.bounds().map(|(_, sc, _, ec)| {
+                let s = ((sc as f64 / total_cols as f64) * track_w as f64) as usize;
+                let e = ((ec as f64 / total_cols as f64) * track_w as f64) as usize;
+                (s, e)
+            });
             let buf = frame.buffer_mut();
             let bar_y = sep_area.y;
             for i in 0..track_w {
@@ -1585,15 +1605,30 @@ impl Editor {
                     break;
                 }
                 let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
-                let (ch, fg) = if is_thumb {
-                    ("▄", Color::Rgb(100, 100, 180))
+                let highlighted = i == cursor_track_col
+                    || sel_track_h.map(|(s, e)| i >= s && i <= e).unwrap_or(false);
+                let (ch, fg) = if highlighted {
+                    ("\u{2501}", Color::Rgb(220, 180, 60)) // ━ yellow for cursor/selection
+                } else if is_thumb {
+                    ("\u{2501}", Color::Rgb(120, 120, 200)) // ━ bright accent for thumb
                 } else {
-                    ("\u{2500}", sep_fg)
+                    ("\u{2501}", sep_fg) // ━ dim for track
                 };
                 if let Some(cell) = buf.cell_mut((x, bar_y)) {
                     cell.set_symbol(ch);
                     cell.set_style(Style::default().fg(fg));
                 }
+            }
+        }
+
+        // Join corner: ╯ rounds off where the vertical scrollbar meets the separator
+        if !self.embedded && v_scroll_w > 0 {
+            let buf = frame.buffer_mut();
+            let cx = vscroll_area.x;
+            let cy = sep_area.y;
+            if let Some(cell) = buf.cell_mut((cx, cy)) {
+                cell.set_symbol("╯");
+                cell.set_style(Style::default().fg(sep_fg));
             }
         }
 
@@ -1645,11 +1680,17 @@ impl Editor {
             left_spans.push(Span::raw("  "));
         }
         if !self.embedded {
-            let fname = Path::new(&self.file_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(&self.file_path);
-            left_spans.push(Span::styled(fname.to_string(), dim_gray));
+            let display_path = if let Some(home) = std::env::var_os("HOME") {
+                let home_str = home.to_string_lossy();
+                if self.file_path.starts_with(home_str.as_ref()) {
+                    format!("~{}", &self.file_path[home_str.len()..])
+                } else {
+                    self.file_path.clone()
+                }
+            } else {
+                self.file_path.clone()
+            };
+            left_spans.push(Span::styled(display_path, dim_gray));
             left_spans.push(Span::raw("  "));
         }
         if !lang_name.is_empty() {
@@ -1804,6 +1845,20 @@ fn handle_mouse(editor: &mut Editor, me: MouseEvent) {
             let col = me.column as usize;
             let row = me.row as usize;
             let content_h = editor.inner_h as usize;
+            // Auto-scroll when dragging near or past the edges (only while selecting).
+            // Speed scales with distance from the edge.
+            if editor.selection.dragging {
+                let zone = 3usize;
+                if row < zone {
+                    let speed = (zone - row).max(1);
+                    editor.scroll_row = editor.scroll_row.saturating_sub(speed);
+                } else if row >= content_h.saturating_sub(zone) {
+                    let dist = row.saturating_sub(content_h.saturating_sub(zone + 1)) + 1;
+                    let speed = dist.max(1);
+                    let max_scroll = editor.line_count().saturating_sub(content_h);
+                    editor.scroll_row = (editor.scroll_row + speed).min(max_scroll);
+                }
+            }
             let row_clamped = row.min(content_h.saturating_sub(1));
             let (target_row, target_col) = mouse_to_doc_pos(editor, col, row_clamped);
             editor.selection.mouse_drag(target_row, target_col);
@@ -2001,6 +2056,19 @@ fn handle_key(editor: &mut Editor, key: KeyEvent) -> Action {
 // main
 // ---------------------------------------------------------------------------
 
+fn parse_cursor_style(s: &str) -> crossterm::cursor::SetCursorStyle {
+    use crossterm::cursor::SetCursorStyle::*;
+    match s.trim().to_lowercase().as_str() {
+        "block" | "steady_block" => SteadyBlock,
+        "blinking_block" => BlinkingBlock,
+        "underline" | "underscore" | "steady_underline" => SteadyUnderScore,
+        "blinking_underline" | "blinking_underscore" => BlinkingUnderScore,
+        "bar" | "line" | "steady_bar" | "steady_line" => SteadyBar,
+        "blinking_bar" | "blinking_line" => BlinkingBar,
+        _ => DefaultUserShape,
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let file_path = args.get(1).cloned().unwrap_or_else(|| {
@@ -2020,6 +2088,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         EnableBracketedPaste,
         crossterm::event::EnableFocusChange,
     )?;
+    // Apply cursor shape from config (env var set by aide, or read directly in standalone).
+    {
+        let shape_str = std::env::var("AIDE_CURSOR_SHAPE").unwrap_or_else(|_| {
+            // Standalone: try to read from aide config file directly.
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            let cfg_path = std::path::Path::new(&home)
+                .join(".config")
+                .join("aide")
+                .join("config.toml");
+            std::fs::read_to_string(&cfg_path)
+                .ok()
+                .and_then(|s| {
+                    s.lines()
+                        .find(|l| l.starts_with("cursor_shape"))
+                        .and_then(|l| l.splitn(2, '=').nth(1))
+                        .map(|v| v.trim().trim_matches('"').to_string())
+                })
+                .unwrap_or_else(|| "default".to_string())
+        });
+        let style = parse_cursor_style(&shape_str);
+        let _ = execute!(stdout, style);
+    }
     // Enable keyboard enhancement in standalone mode so Ctrl+Backspace etc. are disambiguated.
     // Skip when embedded — the PTY layer handles forwarding.
     if !editor.embedded {
@@ -2054,35 +2144,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Report scroll + layout state to aide via OSC window title:
-        // "aide:{scroll_row}/{total_lines}/{view_h}/{scroll_col}/{max_col}/{gutter_w}/{content_h}"
-        // gutter_w: columns reserved for line numbers (not selectable)
-        // content_h: rows of selectable text content (excludes separator + status bar)
+        // Window title
         {
+            use std::io::Write as _;
+            let title = if !editor.embedded {
+                let p = if let Some(home) = std::env::var_os("HOME") {
+                    let h = home.to_string_lossy().to_string();
+                    if editor.file_path.starts_with(&h) {
+                        format!("~{}", &editor.file_path[h.len()..])
+                    } else {
+                        editor.file_path.clone()
+                    }
+                } else {
+                    editor.file_path.clone()
+                };
+                Some(p)
+            } else {
+                None
+            };
+            if let Some(t) = title {
+                let _ = write!(io::stdout(), "\x1b]2;{}\x07", t);
+                let _ = io::stdout().flush();
+            }
+        }
+
+        // Report scroll + layout state to aide via OSC window title (embedded only).
+        // "aide:{scroll_row}/{total_lines}/{view_h}/{scroll_col}/{max_col}/{gutter_w}/{content_h}"
+        if editor.embedded {
             use std::io::Write as _;
             let mut out = io::stdout();
             let _ = write!(
                 out,
-                "\x1b]2;aide:{}/{}/{}/{}/{}/{}/{}\x07",
+                "\x1b]2;aide:{}/{}/{}/{}/{}/{}/{}/{}/{}\x07",
                 editor.scroll_row,
                 editor.line_count(),
                 editor.inner_h,
                 editor.scroll_col,
                 editor.max_line_width(),
                 GUTTER,
-                editor.inner_h, // inner_h is already content-only (separator+status excluded)
+                editor.inner_h,
+                editor.cursor_row,
+                editor.cursor_col,
             );
-            // Report selected text to aide via OSC 7734: "\x1b]7734;<base64text>\x07"
+            // Report selected text + bounds to aide via OSC 7734:
+            // "\x1b]7734;<base64text>;<sr>/<sc>/<er>/<ec>\x07"
             // Empty payload means no selection.
-            if editor.embedded {
-                let payload = if let Some((sr, sc, er, ec)) = editor.selection.bounds() {
-                    let text = selection::extract_from_lines(&editor.lines, sr, sc, er, ec);
-                    selection::base64_encode(text.as_bytes())
-                } else {
-                    String::new()
-                };
-                let _ = write!(out, "\x1b]7734;{}\x07", payload);
-            }
+            let payload = if let Some((sr, sc, er, ec)) = editor.selection.bounds() {
+                let text = selection::extract_from_lines(&editor.lines, sr, sc, er, ec);
+                format!(
+                    "{};{}/{}/{}/{}",
+                    selection::base64_encode(text.as_bytes()),
+                    sr,
+                    sc,
+                    er,
+                    ec
+                )
+            } else {
+                String::new()
+            };
+            let _ = write!(out, "\x1b]7734;{}\x07", payload);
             let _ = out.flush();
         }
 
@@ -2142,6 +2262,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !editor.embedded {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
+    let _ = execute!(
+        terminal.backend_mut(),
+        crossterm::cursor::SetCursorStyle::DefaultUserShape
+    );
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),

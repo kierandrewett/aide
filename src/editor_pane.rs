@@ -22,8 +22,16 @@ pub struct EditorPane {
     pub editor_view_h: u64,
     pub editor_scroll_col: u64,
     pub editor_max_col: u64,
+    /// Cursor position in document coordinates reported via OSC title.
+    pub editor_cursor_row: Option<u64>,
+    pub editor_cursor_col: Option<u64>,
     /// Currently selected text reported by aide-editor via OSC 7734.
     pub editor_selected_text: Option<String>,
+    /// Selection bounds in document coordinates: (start_row, start_col, end_row, end_col).
+    pub sel_start_row: Option<u64>,
+    pub sel_start_col: Option<u64>,
+    pub sel_end_row: Option<u64>,
+    pub sel_end_col: Option<u64>,
 }
 
 impl EditorPane {
@@ -34,6 +42,7 @@ impl EditorPane {
         rows: u16,
         cols: u16,
         theme: &str,
+        cursor_shape: &str,
     ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
@@ -61,6 +70,7 @@ impl EditorPane {
         cmd.env("COLORTERM", "truecolor");
         cmd.env("AIDE_EMBEDDED", "1");
         cmd.env("AIDE_THEME", theme);
+        cmd.env("AIDE_CURSOR_SHAPE", cursor_shape);
 
         let child = pair.slave.spawn_command(cmd)?;
         let writer = pair.master.take_writer()?;
@@ -93,7 +103,13 @@ impl EditorPane {
             editor_view_h: rows as u64,
             editor_scroll_col: 0,
             editor_max_col: 0,
+            editor_cursor_row: None,
+            editor_cursor_col: None,
             editor_selected_text: None,
+            sel_start_row: None,
+            sel_start_col: None,
+            sel_end_row: None,
+            sel_end_col: None,
         })
     }
 
@@ -128,11 +144,16 @@ impl EditorPane {
                     if let Some(v) = parts.get(4).and_then(|x| x.parse::<u64>().ok()) {
                         self.editor_max_col = v;
                     }
+                    // Fields 7 and 8 (0-indexed): cursor_row, cursor_col
+                    self.editor_cursor_row = parts.get(7).and_then(|x| x.parse::<u64>().ok());
+                    self.editor_cursor_col = parts.get(8).and_then(|x| x.parse::<u64>().ok());
                 }
             }
         }
 
-        // Parse and strip aide-editor selection reports: "\x1b]7734;<base64text>\x07"
+        // Parse and strip aide-editor selection reports:
+        // "\x1b]7734;<base64text>;<sr>/<sc>/<er>/<ec>\x07"
+        // Empty payload means no selection.
         let sel_marker = "\x1b]7734;";
         let clean_bytes = if let Ok(s) = std::str::from_utf8(&bytes) {
             if let Some(start) = s.find(sel_marker) {
@@ -141,9 +162,22 @@ impl EditorPane {
                     let payload = &rest[..end];
                     if payload.is_empty() {
                         self.editor_selected_text = None;
+                        self.sel_start_row = None;
+                        self.sel_start_col = None;
+                        self.sel_end_row = None;
+                        self.sel_end_col = None;
                     } else {
-                        let decoded = crate::selection::base64_decode(payload);
+                        // Format: "<base64text>;<sr>/<sc>/<er>/<ec>"
+                        let mut parts = payload.splitn(2, ';');
+                        let text_b64 = parts.next().unwrap_or("");
+                        let bounds_str = parts.next().unwrap_or("");
+                        let decoded = crate::selection::base64_decode(text_b64);
                         self.editor_selected_text = String::from_utf8(decoded).ok();
+                        let bp: Vec<&str> = bounds_str.split('/').collect();
+                        self.sel_start_row = bp.first().and_then(|x| x.parse().ok());
+                        self.sel_start_col = bp.get(1).and_then(|x| x.parse().ok());
+                        self.sel_end_row = bp.get(2).and_then(|x| x.parse().ok());
+                        self.sel_end_col = bp.get(3).and_then(|x| x.parse().ok());
                     }
                     // Strip the OSC sequence so vt100 never sees it
                     let mut clean = s[..start].to_string();

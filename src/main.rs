@@ -56,6 +56,7 @@ fn main() -> Result<()> {
     let result = run_app(&mut terminal);
 
     let _ = io::stdout().execute(PopKeyboardEnhancementFlags);
+    let _ = io::stdout().execute(crossterm::cursor::SetCursorStyle::DefaultUserShape);
     io::stdout().execute(DisableBracketedPaste)?;
     io::stdout().execute(DisableMouseCapture)?;
     disable_raw_mode()?;
@@ -109,6 +110,8 @@ fn handle_daemon_subcommand(args: &[String]) -> Result<()> {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let config = config::Config::load()?;
+    let cursor_style = config::parse_cursor_style(&config.cursor_shape);
+    let _ = io::stdout().execute(cursor_style);
     let mut app = App::new(config);
     app.init()?;
 
@@ -298,6 +301,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                     Action::ForwardCtrl('s') | Action::ForwardCtrl('S') => {
                         app.settings_save();
+                        let style = config::parse_cursor_style(&app.config.cursor_shape);
+                        let _ = io::stdout().execute(style);
                     }
                     Action::PickerChar(c) if app.settings_editing => {
                         app.settings_buf.push(c);
@@ -313,22 +318,31 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                         }
                     }
                     Action::ScrollDown(..) | Action::NextTab => {
-                        let max_row = app::App::EDITOR_THEMES.len(); // rows 0..4 + theme = 5 rows
+                        // rows 0..5: shell, editor cmd, projects dir, icons, theme, cursor shape
+                        let max_row = app::App::EDITOR_THEMES.len(); // == 5 (0-based last = 5)
                         if app.settings_row < max_row {
                             app.settings_row += 1;
                             app.settings_editing = false;
                             app.settings_buf.clear();
                         }
                     }
-                    // Left/Right cycle theme when on the theme row
+                    // Left/Right cycle theme (row 4) or cursor shape (row 5)
                     Action::ScrollLeft(..) => {
                         if app.settings_row == 4 {
                             app.cycle_theme(-1);
+                        } else if app.settings_row == 5 {
+                            app.cycle_cursor_shape(-1);
+                            let style = config::parse_cursor_style(&app.config.cursor_shape);
+                            let _ = io::stdout().execute(style);
                         }
                     }
                     Action::ScrollRight(..) => {
                         if app.settings_row == 4 {
                             app.cycle_theme(1);
+                        } else if app.settings_row == 5 {
+                            app.cycle_cursor_shape(1);
+                            let style = config::parse_cursor_style(&app.config.cursor_shape);
+                            let _ = io::stdout().execute(style);
                         }
                     }
                     _ => {}
@@ -419,6 +433,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                     clear_active_notification(&mut app);
                     last_resize = (0, 0);
+                    last_output_refresh = Instant::now() - output_interval_active;
+                    dirty = true;
                 }
                 Action::PrevTab => {
                     let total =
@@ -437,6 +453,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
                     }
                     clear_active_notification(&mut app);
                     last_resize = (0, 0);
+                    last_output_refresh = Instant::now() - output_interval_active;
+                    dirty = true;
                 }
                 Action::NewInstance => {
                     app.save_tab_layout();

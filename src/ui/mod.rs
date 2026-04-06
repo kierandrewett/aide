@@ -933,6 +933,7 @@ const UNFOCUSED_BORDER: Color = Color::DarkGray;
 const SCROLLBAR_THUMB_FOCUSED: Color = Color::Cyan;
 const SCROLLBAR_THUMB_UNFOCUSED: Color = Color::Rgb(120, 120, 120);
 const SCROLLBAR_TRACK: Color = Color::Rgb(60, 60, 60);
+const SCROLLBAR_HIGHLIGHT: Color = Color::Rgb(220, 180, 60);
 
 /// Convert a vt100 Color to a ratatui Color.
 fn vt100_color(c: vt100::Color) -> Option<Color> {
@@ -1043,6 +1044,8 @@ fn render_scrollbar(
     scroll_offset: u16,
     max_scroll: u16,
     focused: bool,
+    cursor_pos: Option<u16>,
+    sel_range: Option<(u16, u16)>,
 ) {
     if max_scroll == 0 || area.height < 3 {
         return;
@@ -1077,6 +1080,16 @@ fn render_scrollbar(
         SCROLLBAR_THUMB_UNFOCUSED
     };
 
+    let total_content = max_scroll + track_height as u16;
+    let cursor_track_pos = cursor_pos.map(|cp| {
+        ((cp as f64 / total_content as f64) * track_height as f64) as usize
+    });
+    let sel_track = sel_range.map(|(sr, er)| {
+        let s = ((sr as f64 / total_content as f64) * track_height as f64) as usize;
+        let e = ((er as f64 / total_content as f64) * track_height as f64) as usize;
+        (s, e)
+    });
+
     let bar_x = area.x + area.width.saturating_sub(1);
     let bar_y_start = area.y + border_top;
 
@@ -1087,11 +1100,14 @@ fn render_scrollbar(
             break;
         }
         let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
-        let ch = if is_thumb { "┃" } else { "│" };
-        let style = if is_thumb {
-            Style::default().fg(thumb_color)
+        let highlighted = cursor_track_pos == Some(i)
+            || sel_track.map(|(s, e)| i >= s && i <= e).unwrap_or(false);
+        let (ch, style) = if highlighted {
+            ("│", Style::default().fg(SCROLLBAR_HIGHLIGHT))
+        } else if is_thumb {
+            ("┃", Style::default().fg(thumb_color))
         } else {
-            Style::default().fg(SCROLLBAR_TRACK)
+            ("│", Style::default().fg(SCROLLBAR_TRACK))
         };
         if let Some(cell) = buf.cell_mut((bar_x, y)) {
             cell.set_symbol(ch);
@@ -1745,6 +1761,8 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
                 scroll_pos,
                 max_scrollback,
                 is_focused,
+                None,
+                None,
             );
         }
     } else {
@@ -1780,6 +1798,8 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
             scroll_pos,
             max_scroll_back,
             is_focused,
+            None,
+            None,
         );
     }
 }
@@ -2020,6 +2040,8 @@ fn draw_git_status(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool
         app.git_status_scroll,
         max_scroll,
         is_focused,
+        None,
+        None,
     );
 }
 
@@ -2223,7 +2245,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
             }
         }
 
-        let commit_display_row = lines.len() + app.git_log_scroll as usize;
+        let commit_display_row = lines.len();
         let is_commit_sel = app.git_log_selected_row == Some(commit_display_row);
         let commit_line = if is_commit_sel {
             Line::from(spans).style(Style::default().bg(Color::Rgb(40, 40, 65)))
@@ -2311,7 +2333,7 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
                                 .add_modifier(Modifier::BOLD),
                         ));
 
-                        let file_display_row = lines.len() + app.git_log_scroll as usize;
+                        let file_display_row = lines.len();
                         let is_file_sel = app.git_log_selected_row == Some(file_display_row);
                         let file_line = if is_file_sel {
                             Line::from(fspans).style(Style::default().bg(Color::Rgb(40, 40, 65)))
@@ -2367,6 +2389,8 @@ fn draw_git_log(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: bool) {
         app.git_log_scroll,
         max_scroll,
         is_focused,
+        None,
+        None,
     );
 }
 
@@ -2694,7 +2718,7 @@ fn draw_confirm_dialog(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
-    const ROWS: usize = 5;
+    const ROWS: usize = 6;
     let dialog_width = 70u16.min(area.width.saturating_sub(4));
     let dialog_height = (ROWS as u16 + 6).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(dialog_width)) / 2;
@@ -2727,13 +2751,21 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|(_, name)| *name)
         .unwrap_or("Unknown");
 
-    // Rows: label + value string (theme row handled specially below)
+    // Cursor shape display name
+    let cursor_display = crate::app::App::CURSOR_SHAPES
+        .iter()
+        .find(|(id, _)| *id == app.config.cursor_shape.as_str())
+        .map(|(_, name)| *name)
+        .unwrap_or("Default");
+
+    // Rows: label + value string (theme/cursor rows handled specially below)
     let field_values: [(&str, &str); ROWS] = [
         ("Shell Command", &app.config.command),
         ("Editor Command", &app.config.editor_command),
         ("Projects Dir", &app.config.projects_dir),
         ("Icons", if app.config.icons { "on" } else { "off" }),
         ("Editor Theme", theme_display),
+        ("Cursor Shape", cursor_display),
     ];
 
     let dim = Style::default().fg(Color::Rgb(100, 100, 100));
@@ -2767,16 +2799,37 @@ fn draw_settings(frame: &mut Frame, app: &mut App, area: Rect) {
 
         let row_area = Rect::new(inner.x, row_y, inner.width, 1);
 
-        if i == 4 {
-            // Theme row: show ◀ name ▶ selector
-            let theme_names: Vec<&str> = crate::app::App::EDITOR_THEMES
-                .iter()
-                .map(|(_, n)| *n)
-                .collect();
-            let cur_idx = crate::app::App::EDITOR_THEMES
-                .iter()
-                .position(|(id, _)| *id == app.config.editor_theme.as_str())
-                .unwrap_or(0);
+        if i == 4 || i == 5 {
+            // Theme (4) and Cursor Shape (5): show ◀ name ▶ selector
+            let (items, cur_id) = if i == 4 {
+                (
+                    crate::app::App::EDITOR_THEMES
+                        .iter()
+                        .map(|(_, n)| *n)
+                        .collect::<Vec<_>>(),
+                    app.config.editor_theme.as_str(),
+                )
+            } else {
+                (
+                    crate::app::App::CURSOR_SHAPES
+                        .iter()
+                        .map(|(_, n)| *n)
+                        .collect::<Vec<_>>(),
+                    app.config.cursor_shape.as_str(),
+                )
+            };
+            let theme_names = items;
+            let cur_idx = if i == 4 {
+                crate::app::App::EDITOR_THEMES
+                    .iter()
+                    .position(|(id, _)| *id == cur_id)
+                    .unwrap_or(0)
+            } else {
+                crate::app::App::CURSOR_SHAPES
+                    .iter()
+                    .position(|(id, _)| *id == cur_id)
+                    .unwrap_or(0)
+            };
             let prev_name = theme_names[(cur_idx + theme_names.len() - 1) % theme_names.len()];
             let next_name = theme_names[(cur_idx + 1) % theme_names.len()];
 
@@ -3286,6 +3339,8 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
             app.file_browser.scroll_offset,
             max_scroll,
             is_focused,
+            None,
+            None,
         );
     }
 }
@@ -3298,6 +3353,8 @@ fn render_horizontal_scrollbar(
     scroll_offset: u16,
     max_scroll: u16,
     focused: bool,
+    cursor_pos: Option<u16>,
+    sel_range: Option<(u16, u16)>,
 ) {
     if max_scroll == 0 || area.width < 5 {
         return;
@@ -3329,6 +3386,16 @@ fn render_horizontal_scrollbar(
         SCROLLBAR_THUMB_UNFOCUSED
     };
 
+    let total_content = max_scroll as usize + track_width;
+    let cursor_track_pos = cursor_pos.map(|cp| {
+        ((cp as f64 / total_content as f64) * track_width as f64) as usize
+    });
+    let sel_track = sel_range.map(|(sc, ec)| {
+        let s = ((sc as f64 / total_content as f64) * track_width as f64) as usize;
+        let e = ((ec as f64 / total_content as f64) * track_width as f64) as usize;
+        (s, e)
+    });
+
     let bar_y = area.y + area.height.saturating_sub(1);
     let bar_x_start = area.x + border_left;
 
@@ -3339,11 +3406,14 @@ fn render_horizontal_scrollbar(
             break;
         }
         let is_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
-        let ch = if is_thumb { "━" } else { "─" };
-        let style = if is_thumb {
-            Style::default().fg(thumb_color)
+        let highlighted = cursor_track_pos == Some(i)
+            || sel_track.map(|(s, e)| i >= s && i <= e).unwrap_or(false);
+        let (ch, style) = if highlighted {
+            ("─", Style::default().fg(SCROLLBAR_HIGHLIGHT))
+        } else if is_thumb {
+            ("━", Style::default().fg(thumb_color))
         } else {
-            Style::default().fg(SCROLLBAR_TRACK)
+            ("─", Style::default().fg(SCROLLBAR_TRACK))
         };
         if let Some(cell) = buf.cell_mut((x, bar_y)) {
             cell.set_symbol(ch);
@@ -3465,29 +3535,56 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
         let text = vt100_screen_to_text(ep.parser.screen_mut(), None, 0, u16::MAX);
         frame.render_widget(Paragraph::new(text), content_area);
 
-        // Forward the cursor position to ratatui so it appears in the right spot
-        let screen = ep.parser.screen_mut();
-        if !screen.hide_cursor() {
-            let (crow, ccol) = screen.cursor_position();
-            let cx = content_area.x + ccol;
-            let cy = content_area.y + crow;
-            if cx < content_area.x + content_area.width && cy < content_area.y + content_area.height
-            {
-                let buf = frame.buffer_mut();
-                if let Some(cell) = buf.cell_mut((cx, cy)) {
-                    if is_focused {
-                        if cell.modifier.contains(Modifier::REVERSED) {
-                            cell.modifier.remove(Modifier::REVERSED);
+        // Forward the cursor position to ratatui so it appears in the right spot.
+        // Also capture doc-coordinate cursor for scrollbar indicators (from OSC, not vt100,
+        // because ratatui hides the terminal cursor during draw).
+        let cursor_doc_row = ep.editor_cursor_row.map(|r| r as u16);
+        let cursor_doc_col = ep.editor_cursor_col.map(|c| c as u16);
+        {
+            let screen = ep.parser.screen_mut();
+            if !screen.hide_cursor() {
+                let (crow, ccol) = screen.cursor_position();
+                let cx = content_area.x + ccol;
+                let cy = content_area.y + crow;
+                if cx < content_area.x + content_area.width
+                    && cy < content_area.y + content_area.height
+                {
+                    let buf = frame.buffer_mut();
+                    if let Some(cell) = buf.cell_mut((cx, cy)) {
+                        if is_focused {
+                            if cell.modifier.contains(Modifier::REVERSED) {
+                                cell.modifier.remove(Modifier::REVERSED);
+                            } else {
+                                cell.modifier.insert(Modifier::REVERSED);
+                            }
                         } else {
-                            cell.modifier.insert(Modifier::REVERSED);
+                            cell.set_fg(Color::DarkGray);
+                            cell.set_bg(Color::DarkGray);
                         }
-                    } else {
-                        cell.set_fg(Color::DarkGray);
-                        cell.set_bg(Color::DarkGray);
                     }
                 }
             }
         }
+
+        // Selection range for scrollbar indicators
+        let v_sel_range = if let Some(ep) = &app.editor_pane {
+            if let (Some(sr), Some(er)) = (ep.sel_start_row, ep.sel_end_row) {
+                Some((sr as u16, er as u16))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let h_sel_range = if let Some(ep) = &app.editor_pane {
+            if let (Some(sc), Some(ec)) = (ep.sel_start_col, ep.sel_end_col) {
+                Some((sc as u16, ec as u16))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Vertical scrollbar on the right edge
         if show_scrollbar {
@@ -3499,6 +3596,8 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
                 editor_scroll as u16,
                 max_scroll,
                 is_focused,
+                cursor_doc_row,
+                v_sel_range,
             );
         }
 
@@ -3514,6 +3613,8 @@ fn draw_file_viewer(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: boo
                 editor_scroll_col as u16,
                 h_max_scroll as u16,
                 is_focused,
+                cursor_doc_col,
+                h_sel_range,
             );
         }
     } else {
