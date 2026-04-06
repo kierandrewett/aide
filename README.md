@@ -10,6 +10,10 @@
   <a href="#configuration">Configuration</a>
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="aide screenshot" width="100%">
+</p>
+
 ---
 
 **aide** turns your terminal into a lightweight IDE — tabbed terminal sessions, a file browser with syntax-highlighted previews, git context, and a command palette — all keyboard-driven and running in a single process.
