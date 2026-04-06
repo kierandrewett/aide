@@ -52,6 +52,45 @@ impl FileBrowser {
         }
     }
 
+    /// Re-scan the filesystem while preserving expanded dirs, selection, and scroll.
+    pub fn soft_refresh(&mut self) {
+        if self.root.as_os_str().is_empty() || !self.root.exists() {
+            return;
+        }
+
+        // Remember state before wiping entries
+        let expanded: HashSet<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir && e.expanded)
+            .map(|e| e.path.clone())
+            .collect();
+        let selected_path = self.entries.get(self.selected).map(|e| e.path.clone());
+        let scroll = self.scroll_offset;
+
+        // Full reload (resets selected/scroll but we restore below)
+        self.entries.clear();
+        self.load_dir(&self.root.clone(), 0);
+        self.update_ignored();
+
+        // Re-expand previously-expanded dirs shallowest-first so children exist
+        // when we try to expand deeper dirs.
+        let mut to_expand: Vec<PathBuf> = expanded.into_iter().collect();
+        to_expand.sort_by_key(|p| p.components().count());
+        for path in to_expand {
+            if let Some(idx) = self.entries.iter().position(|e| e.path == path && e.is_dir) {
+                self.selected = idx;
+                self.toggle_expand();
+            }
+        }
+
+        // Restore selection by path (fall back to clamped index)
+        self.selected = selected_path
+            .and_then(|p| self.entries.iter().position(|e| e.path == p))
+            .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
+        self.scroll_offset = scroll;
+    }
+
     /// Query git to find ignored files and mark them.
     fn update_ignored(&mut self) {
         let ignored = git_ignored_paths(&self.root);

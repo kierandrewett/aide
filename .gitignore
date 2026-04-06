@@ -1,4 +1,4 @@
 /target
 /.claude
 !/.claude/skills
-/.agent/worktrees
+/.agents/worktrees

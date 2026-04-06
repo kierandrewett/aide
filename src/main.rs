@@ -119,10 +119,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 
     let mut last_git_refresh = Instant::now();
     let mut last_output_refresh = Instant::now();
+    let mut last_filebrowser_refresh = Instant::now();
     let mut last_resize = (0u16, 0u16);
     let mut last_editor_resize = (0u16, 0u16);
 
     let git_refresh_interval = Duration::from_secs(2);
+    let filebrowser_refresh_interval = Duration::from_secs(3);
     // Active: ~120fps while PTY data flows or user is typing.
     // Idle: ~20fps when quiet (still responsive to immediate redraws).
     let output_interval_active = Duration::from_millis(8);
@@ -222,6 +224,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
         if now.duration_since(last_git_refresh) >= git_refresh_interval {
             request_git_refresh(&app);
             last_git_refresh = now;
+        }
+
+        // --- File browser periodic refresh ---
+        if now.duration_since(last_filebrowser_refresh) >= filebrowser_refresh_interval {
+            if app.show_file_browser {
+                app.file_browser.soft_refresh();
+                let status = app.git_status.clone();
+                app.file_browser.update_git_status(&status);
+                dirty = true;
+            }
+            last_filebrowser_refresh = now;
         }
 
         // --- Background notifications ---
