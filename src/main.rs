@@ -1275,7 +1275,11 @@ fn extract_selection(screen: &vt100::Screen, sel: &selection::SelectionState) ->
     let mut result = String::new();
     for row in sr..=er.min(rows.saturating_sub(1) as usize) {
         let col_start = if row == sr { sc } else { 0 };
-        let col_end = if row == er { ec } else { cols.saturating_sub(1) as usize };
+        let col_end = if row == er {
+            ec
+        } else {
+            cols.saturating_sub(1) as usize
+        };
         for col in col_start..=col_end.min(cols.saturating_sub(1) as usize) {
             if let Some(cell) = screen.cell(row as u16, col as u16) {
                 if cell.is_wide_continuation() {

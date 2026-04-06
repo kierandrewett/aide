@@ -1665,7 +1665,16 @@ fn draw_claude_output(frame: &mut Frame, app: &mut App, area: Rect, is_narrow: b
         let at_bottom = app.follow_mode || app.scroll_offset == 0;
 
         // Build ratatui Text directly from vt100 cell data
-        let text = vt100_screen_to_text(screen, if !app.selection_in_editor && app.selection.has_selection() { Some(&app.selection) } else { None }, 0, u16::MAX);
+        let text = vt100_screen_to_text(
+            screen,
+            if !app.selection_in_editor && app.selection.has_selection() {
+                Some(&app.selection)
+            } else {
+                None
+            },
+            0,
+            u16::MAX,
+        );
 
         let paragraph = Paragraph::new(text).block(block);
         frame.render_widget(paragraph, area);
@@ -3137,7 +3146,11 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
             // two spaces before file icons so both columns stay aligned.
             let chevron_prefix = if app.icons {
                 if entry.is_dir {
-                    if entry.expanded { "▾ " } else { "▸ " }
+                    if entry.expanded {
+                        "▾ "
+                    } else {
+                        "▸ "
+                    }
                 } else {
                     "  "
                 }

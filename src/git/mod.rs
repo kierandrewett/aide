@@ -104,9 +104,8 @@ fn walk_untracked_dir(abs_dir: &std::path::Path, repo_prefix: &str, out: &mut Ve
         Ok(e) => e,
         Err(_) => return,
     };
-    let mut children: Vec<std::path::PathBuf> = entries
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
+    let mut children: Vec<std::path::PathBuf> =
+        entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
     children.sort();
     for child in children {
         let name = match child.file_name().and_then(|n| n.to_str()) {
@@ -177,8 +176,14 @@ fn sort_status_lines(status: &str) -> String {
         pa.cmp(pb)
     });
     let mut out = String::new();
-    for l in headers { out.push_str(l); out.push('\n'); }
-    for l in files { out.push_str(l); out.push('\n'); }
+    for l in headers {
+        out.push_str(l);
+        out.push('\n');
+    }
+    for l in files {
+        out.push_str(l);
+        out.push('\n');
+    }
     out
 }
 

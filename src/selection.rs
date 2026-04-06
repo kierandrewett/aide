@@ -42,7 +42,10 @@ impl SelectionState {
     /// Called on mouse button release. Clears selection if the mouse never moved.
     pub fn mouse_up(&mut self, row: usize, col: usize) {
         self.dragging = false;
-        if self.end.is_none() || self.end == self.anchor || self.end == Some((row, col)) && self.anchor == Some((row, col)) {
+        if self.end.is_none()
+            || self.end == self.anchor
+            || self.end == Some((row, col)) && self.anchor == Some((row, col))
+        {
             self.anchor = None;
             self.end = None;
         }
@@ -87,20 +90,18 @@ impl SelectionState {
             return false;
         }
         let line_start = if row == sr { sc } else { 0 };
-        let line_end = if row == er { ec } else { line_cols.saturating_sub(1) };
+        let line_end = if row == er {
+            ec
+        } else {
+            line_cols.saturating_sub(1)
+        };
         col >= line_start && col <= line_end
     }
 }
 
 /// Extract the selected text from a slice of document lines.
 /// `(sr, sc)` is the inclusive start; `(er, ec)` is the inclusive end.
-pub fn extract_from_lines(
-    lines: &[String],
-    sr: usize,
-    sc: usize,
-    er: usize,
-    ec: usize,
-) -> String {
+pub fn extract_from_lines(lines: &[String], sr: usize, sc: usize, er: usize, ec: usize) -> String {
     let mut text = String::new();
     for row in sr..=er {
         if row >= lines.len() {
@@ -141,8 +142,16 @@ pub fn base64_encode(data: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(CHARS[((n >> 18) & 63) as usize] as char);
         out.push(CHARS[((n >> 12) & 63) as usize] as char);
-        out.push(if chunk.len() > 1 { CHARS[((n >> 6) & 63) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { CHARS[(n & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            CHARS[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            CHARS[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -161,7 +170,9 @@ pub fn base64_decode(s: &str) -> Vec<u8> {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
     for chunk in bytes.chunks(4) {
-        if chunk.len() < 2 { break; }
+        if chunk.len() < 2 {
+            break;
+        }
         let a = val(chunk[0]);
         let b = val(chunk[1]);
         out.push((a << 2) | (b >> 4));

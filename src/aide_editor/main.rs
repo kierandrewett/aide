@@ -764,7 +764,9 @@ fn prepare_preview_png(bytes: &[u8], path: &str) -> Option<Vec<u8>> {
 /// Returns true if the terminal supports Kitty graphics protocol.
 fn supports_kitty_graphics() -> bool {
     std::env::var("KITTY_WINDOW_ID").is_ok()
-        || std::env::var("TERM").map(|t| t == "xterm-kitty").unwrap_or(false)
+        || std::env::var("TERM")
+            .map(|t| t == "xterm-kitty")
+            .unwrap_or(false)
 }
 
 /// Convert binary bytes to a displayable string (nano/vi style).
@@ -1368,7 +1370,11 @@ impl Editor {
         let size = frame.area();
         // Layout rows (bottom-up): status bar + separator/h-scrollbar row
         // When a binary warning is shown, add 1 extra row above the status bar.
-        let binary_warn_row: u16 = if self.is_binary && !self.binary_warning_dismissed { 1 } else { 0 };
+        let binary_warn_row: u16 = if self.is_binary && !self.binary_warning_dismissed {
+            1
+        } else {
+            0
+        };
         let bottom_rows: u16 = BOTTOM_ROWS + binary_warn_row;
         // Rightmost column reserved for vertical scrollbar (suppressed when embedded)
         let v_scroll_w: u16 = if self.embedded { 0 } else { 1 };
@@ -1384,17 +1390,23 @@ impl Editor {
         // Binary warning bar sits just above the separator (when shown)
         let warn_area = Rect::new(size.x, size.y + content_h, size.width, binary_warn_row);
         let sep_area = Rect::new(size.x, size.y + content_h + binary_warn_row, size.width, 1);
-        let status_area = Rect::new(size.x, size.y + content_h + binary_warn_row + 1, size.width, 1);
+        let status_area = Rect::new(
+            size.x,
+            size.y + content_h + binary_warn_row + 1,
+            size.width,
+            1,
+        );
 
         // Draw binary warning banner
         if binary_warn_row > 0 {
-            let warn_text = if self.is_image && self.preview_png.is_some() && supports_kitty_graphics() {
-                " Binary file (image). Enter to preview, Esc to close "
-            } else if self.is_image {
-                " Binary file (image, no preview available). Enter to view, Esc to close "
-            } else {
-                " Binary file. Enter to view, Esc to close "
-            };
+            let warn_text =
+                if self.is_image && self.preview_png.is_some() && supports_kitty_graphics() {
+                    " Binary file (image). Enter to preview, Esc to close "
+                } else if self.is_image {
+                    " Binary file (image, no preview available). Enter to view, Esc to close "
+                } else {
+                    " Binary file. Enter to view, Esc to close "
+                };
             frame.render_widget(
                 Paragraph::new(warn_text).style(
                     Style::default()
@@ -1473,9 +1485,13 @@ impl Editor {
             let ly = content_area.y + content_h / 2;
             if content_h > 0 && content_w > 0 {
                 frame.render_widget(
-                    Paragraph::new(label)
-                        .style(Style::default().fg(Color::Rgb(80, 80, 100))),
-                    Rect::new(lx, ly, label.chars().count().min(content_w as usize) as u16, 1),
+                    Paragraph::new(label).style(Style::default().fg(Color::Rgb(80, 80, 100))),
+                    Rect::new(
+                        lx,
+                        ly,
+                        label.chars().count().min(content_w as usize) as u16,
+                        1,
+                    ),
                 );
             }
             self.last_image_area = content_area;
@@ -1485,7 +1501,8 @@ impl Editor {
         if !(self.is_binary && self.binary_warning_dismissed && self.show_image_preview) {
             let crow_s = self.cursor_row as isize - self.scroll_row as isize;
             let ccol_s = self.cursor_col as isize - self.scroll_col as isize;
-            if crow_s >= 0 && crow_s < content_h as isize && ccol_s >= 0 && ccol_s < text_w as isize {
+            if crow_s >= 0 && crow_s < content_h as isize && ccol_s >= 0 && ccol_s < text_w as isize
+            {
                 let cx = text_area.x + ccol_s as u16;
                 let cy = text_area.y + crow_s as u16;
                 let buf = frame.buffer_mut();
@@ -1864,7 +1881,8 @@ fn handle_key(editor: &mut Editor, key: KeyEvent) -> Action {
     // Reset quit confirm on any key other than Ctrl+Q/X
     let is_ctrl_q = key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL);
     let is_ctrl_x = key.code == KeyCode::Char('x') && key.modifiers.contains(KeyModifiers::CONTROL);
-    let is_ctrl_c = matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C')) && key.modifiers.contains(KeyModifiers::CONTROL);
+    let is_ctrl_c = matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+        && key.modifiers.contains(KeyModifiers::CONTROL);
     let is_ctrl_a = key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL);
     let is_esc = key.code == KeyCode::Esc;
     if !is_ctrl_q && !is_ctrl_x {
@@ -2052,7 +2070,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 editor.scroll_col,
                 editor.max_line_width(),
                 GUTTER,
-                editor.inner_h,  // inner_h is already content-only (separator+status excluded)
+                editor.inner_h, // inner_h is already content-only (separator+status excluded)
             );
             // Report selected text to aide via OSC 7734: "\x1b]7734;<base64text>\x07"
             // Empty payload means no selection.

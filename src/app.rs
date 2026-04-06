@@ -114,7 +114,6 @@ pub enum GitLogRow {
     Graph,
 }
 
-
 /// Callbacks for vt100 parser to capture PTY title changes.
 #[derive(Clone, Default)]
 pub struct PtyCallbacks {
