@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::pty_backend::DaemonClient;
+use anyhow::Result;
 
 #[derive(Clone, Debug)]
 pub struct Session {

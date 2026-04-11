@@ -1320,7 +1320,6 @@ fn extract_selection(screen: &vt100::Screen, sel: &selection::SelectionState) ->
     result
 }
 
-
 /// Returns true if new PTY data was received (used to track activity for refresh rate).
 fn refresh_output(app: &mut App) -> bool {
     let session_id = match app.session_manager.active_session() {
