@@ -28,8 +28,6 @@ use ratatui::{
     Frame, Terminal,
 };
 use tree_sitter_highlight::{Highlight, HighlightConfiguration, HighlightEvent, Highlighter};
-use tree_sitter_md;
-use tree_sitter_yaml;
 
 #[path = "../selection.rs"]
 mod selection;
@@ -408,10 +406,10 @@ fn detect_lang_by_name_or_content(fname: &str, path: &str) -> Option<&'static st
     // Read first 20 lines for content-based detection
     let head: Vec<String> = std::fs::File::open(path)
         .ok()
-        .and_then(|f| {
+        .map(|f| {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(f);
-            Some(reader.lines().take(20).filter_map(|l| l.ok()).collect())
+            reader.lines().take(20).filter_map(|l| l.ok()).collect()
         })
         .unwrap_or_default();
 
@@ -606,7 +604,7 @@ impl LangConfig {
                     // Fallback: project config (vscode/gitattributes), then filename/content sniff
                     let detected = detect_lang_from_project_config(path)
                         .or_else(|| detect_lang_by_name_or_content(&fname, path));
-                    return detected.and_then(|det_ext| Self::from_ext(det_ext));
+                    return detected.and_then(Self::from_ext);
                 }
             };
 
@@ -1768,8 +1766,8 @@ fn build_line_spans<'a>(
     for (byte_range, color) in hl {
         let char_start = byte_range.start.saturating_sub(scroll_col);
         let char_end = byte_range.end.saturating_sub(scroll_col);
-        for i in char_start..char_end.min(n) {
-            fg_colors[i] = *color;
+        for item in fg_colors.iter_mut().take(char_end.min(n)).skip(char_start) {
+            *item = *color;
         }
     }
 
@@ -1779,8 +1777,8 @@ fn build_line_spans<'a>(
         // Convert to visible-char indices
         let vs = sel_start.saturating_sub(scroll_col);
         let ve = sel_end.saturating_sub(scroll_col).min(n);
-        for i in vs..ve {
-            bg_colors[i] = Some(selection::SELECTION_BG);
+        for item in bg_colors.iter_mut().take(ve).skip(vs) {
+            *item = Some(selection::SELECTION_BG);
         }
     }
 
@@ -1885,7 +1883,7 @@ fn handle_mouse(editor: &mut Editor, me: MouseEvent) {
 
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     let mut chunks = data.chunks_exact(3);
     for chunk in chunks.by_ref() {
         let b = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
@@ -2102,7 +2100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|s| {
                     s.lines()
                         .find(|l| l.starts_with("cursor_shape"))
-                        .and_then(|l| l.splitn(2, '=').nth(1))
+                        .and_then(|l| l.split_once('=').map(|x| x.1))
                         .map(|v| v.trim().trim_matches('"').to_string())
                 })
                 .unwrap_or_else(|| "default".to_string())
@@ -2123,7 +2121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         editor.frame_count = editor.frame_count.wrapping_add(1);
-        if editor.frame_count % 20 == 0 {
+        if editor.frame_count.is_multiple_of(20) {
             editor.check_external_modification();
         }
 

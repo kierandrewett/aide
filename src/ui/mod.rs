@@ -1037,6 +1037,7 @@ fn vt100_screen_to_text(
 }
 
 /// Render a scrollbar on the right edge of a panel area.
+#[allow(clippy::too_many_arguments)]
 fn render_scrollbar(
     frame: &mut Frame,
     area: Rect,
@@ -3345,6 +3346,7 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect, is_narrow: bool) 
 }
 
 /// Render a horizontal scrollbar along the bottom edge of a panel area.
+#[allow(clippy::too_many_arguments)]
 fn render_horizontal_scrollbar(
     frame: &mut Frame,
     area: Rect,

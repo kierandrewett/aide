@@ -1189,7 +1189,7 @@ fn subsequence_score(query: &str, target: &str) -> Option<i32> {
             break;
         }
         if t[ti] == q[qi] {
-            let consecutive = last_ti.map_or(false, |l| l + 1 == ti);
+            let consecutive = last_ti.is_some_and(|l| l + 1 == ti);
             if consecutive {
                 run += 1;
                 score += 4 + run; // growing bonus for unbroken runs

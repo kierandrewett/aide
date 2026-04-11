@@ -59,6 +59,7 @@ impl SelectionState {
     }
 
     /// True if a non-empty selection exists.
+    #[allow(dead_code)]
     pub fn has_selection(&self) -> bool {
         self.anchor.is_some() && self.end.is_some() && self.anchor != self.end
     }
@@ -81,6 +82,7 @@ impl SelectionState {
     /// True if `(row, col)` falls inside the selection.
     /// `line_cols` is the total number of columns on a row — used to extend
     /// selection to end-of-line for interior rows.
+    #[allow(dead_code)]
     pub fn contains(&self, row: usize, col: usize, line_cols: usize) -> bool {
         let (sr, sc, er, ec) = match self.bounds() {
             Some(b) => b,
@@ -101,6 +103,7 @@ impl SelectionState {
 
 /// Extract the selected text from a slice of document lines.
 /// `(sr, sc)` is the inclusive start; `(er, ec)` is the inclusive end.
+#[allow(dead_code)]
 pub fn extract_from_lines(lines: &[String], sr: usize, sc: usize, er: usize, ec: usize) -> String {
     let mut text = String::new();
     for row in sr..=er {
@@ -156,6 +159,7 @@ pub fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+#[allow(dead_code)]
 pub fn base64_decode(s: &str) -> Vec<u8> {
     fn val(c: u8) -> u8 {
         match c {

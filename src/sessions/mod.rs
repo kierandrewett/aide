@@ -1,6 +1,4 @@
 use anyhow::Result;
-use libc;
-
 use crate::pty_backend::DaemonClient;
 
 #[derive(Clone, Debug)]
