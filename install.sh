@@ -65,6 +65,11 @@ mkdir -p "$INSTALL_DIR"
 mv "${TMPDIR}/aide" "${INSTALL_DIR}/aide"
 chmod +x "${INSTALL_DIR}/aide"
 
+if [ -f "${TMPDIR}/aide-daemon" ]; then
+    mv "${TMPDIR}/aide-daemon" "${INSTALL_DIR}/aide-daemon"
+    chmod +x "${INSTALL_DIR}/aide-daemon"
+fi
+
 echo ""
 echo "aide ${TAG} installed to ${INSTALL_DIR}/aide"
 

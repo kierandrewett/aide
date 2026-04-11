@@ -54,7 +54,7 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.archive }} aide
+          tar czf ../../../${{ matrix.archive }} aide aide-daemon
           cd ../../..
 
       - name: Upload artifact
